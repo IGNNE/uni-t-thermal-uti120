@@ -1,0 +1,12 @@
+# UNI-T UTi120Mobile Thermal Camera - udev rule for non-root USB access
+#
+# Install:
+#   sudo cp 99-uti120.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger
+#
+# Then unplug and replug the camera.
+#
+# Grants read/write access to the UTi120 USB device (VID 5656, PID 1201)
+# for all users in the plugdev group, so the viewer can run without root.
+SUBSYSTEM=="usb", ATTR{idVendor}=="5656", ATTR{idProduct}=="1201", MODE="0666", GROUP="plugdev"
