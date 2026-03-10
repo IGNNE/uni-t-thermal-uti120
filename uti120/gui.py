@@ -540,6 +540,21 @@ class MainWindow(QMainWindow):
                 composited = self.surface3d.render_composited_frame()
             else:
                 composited = self.thermal.render_composited_frame(display_bgr, processor)
+            # Timestamp in lower-right corner
+            ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            scale, thickness = 0.35, 1
+            (tw, th), baseline = cv2.getTextSize(ts, font, scale, thickness)
+            h, w = composited.shape[:2]
+            margin = 8
+            tx = w - tw - margin
+            ty = h - margin
+            cv2.rectangle(composited,
+                          (tx - 4, ty - th - 4),
+                          (tx + tw + 4, ty + baseline + 4),
+                          (0, 0, 0), cv2.FILLED)
+            cv2.putText(composited, ts, (tx, ty), font, scale,
+                        (255, 255, 255), thickness, cv2.LINE_AA)
             self._video_writer.write(composited)
 
     @pyqtSlot(str)
