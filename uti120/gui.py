@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 import time
 import datetime
+import subprocess
+import threading
 from typing import TYPE_CHECKING
 
 import cv2
@@ -149,7 +151,8 @@ class MainWindow(QMainWindow):
         self._stats_timer.start(STATS_UPDATE_INTERVAL_MS)
 
         # Recording state
-        self._video_writer: cv2.VideoWriter | None = None
+        # self._video_writer: cv2.VideoWriter | None = None
+        self._ffmpeg_process: subprocess.Popen | None = None
         self._recording_active: bool = False
         self._recording_start: float | None = None
         self._recording_file: str | None = None
@@ -533,7 +536,7 @@ class MainWindow(QMainWindow):
         self.graph_panel.set_processor(processor)
 
         # Write composited frame to video (overlays baked in)
-        if self._recording_active and self._video_writer is not None:
+        if self._recording_active and self._ffmpeg_process is not None: # and self._video_writer is not None:
             if self._mosaic_active:
                 composited = self.mosaic.render_composited_frame()
             elif self._surface3d_active and HAS_3D:
@@ -555,7 +558,8 @@ class MainWindow(QMainWindow):
                           (0, 0, 0), cv2.FILLED)
             cv2.putText(composited, ts, (tx, ty), font, scale,
                         (255, 255, 255), thickness, cv2.LINE_AA)
-            self._video_writer.write(composited)
+            # self._video_writer.write(composited)
+            self._ffmpeg_process.stdin.write(composited)
 
     @pyqtSlot(str)
     def _on_status(self, msg: str) -> None:
@@ -769,26 +773,56 @@ class MainWindow(QMainWindow):
             self._stop_video_recording()
 
     def _start_video_recording(self) -> None:
-        save_dir = self._ensure_save_dir()
-        fname = str(save_dir /
-            f"thermal_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4")
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        self._video_writer = cv2.VideoWriter(
-            fname, fourcc, 25, (DISPLAY_WIDTH, DISPLAY_HEIGHT))
+        # save_dir = self._ensure_save_dir()
+        # fname = str(save_dir /
+        #     f"thermal_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.mov")
+        # fourcc = cv2.VideoWriter_fourcc(*'X264')
+        # fourcc = 0x21
+        # self._video_writer = cv2.VideoWriter(
+        #     fname, fourcc, 25, (DISPLAY_WIDTH, DISPLAY_HEIGHT))
+        # self._recording_active = True
+        # self._recording_file = fname
+        # self._recording_start = time.time()
+        # self.thermal._recording = True
+        # if HAS_3D:
+        #     self.surface3d._recording = True
+        # self.btn_record.setChecked(True)
+        # self.btn_record.setText("[Ctrl+R] Stop")
+        # self.statusBar().showMessage(f"Recording: {fname}")
+
+
+        # Stream video to HTTP using ffmpeg
+        port = 12345  # Replace with your desired port
+        ffmpeg_command = [
+            'ffmpeg', '-y', '-f', 'rawvideo', '-vcodec', 'rawvideo',
+            '-pix_fmt', 'bgr24', '-s', f'{DISPLAY_WIDTH}x{DISPLAY_HEIGHT}',
+            '-r', '25', '-i', '-', '-c:v', 'libx264', '-preset', 'ultrafast',
+            '-movflags', 'frag_keyframe+empty_moov', '-b:v', '500k',
+            '-f', 'mpegts', f'udp://127.0.0.1:{port}'
+        ]
+        self._ffmpeg_process = subprocess.Popen(
+            ffmpeg_command, stdin=subprocess.PIPE, stderr=subprocess.PIPE, stdout=subprocess.PIPE
+        )
+        # Print ffmpeg process output for debugging
+        def print_ffmpeg_output():
+            for line in self._ffmpeg_process.stderr:
+                print(line.decode('utf-8').strip())
+        threading.Thread(target=print_ffmpeg_output, daemon=True).start()
         self._recording_active = True
-        self._recording_file = fname
+        self._recording_file = ""
         self._recording_start = time.time()
         self.thermal._recording = True
         if HAS_3D:
             self.surface3d._recording = True
         self.btn_record.setChecked(True)
         self.btn_record.setText("[Ctrl+R] Stop")
-        self.statusBar().showMessage(f"Recording: {fname}")
+        self.statusBar().showMessage(f"Streaming video to HTTP on port {port}")
+
 
     def _stop_video_recording(self) -> None:
-        if self._video_writer:
-            self._video_writer.release()
-            self._video_writer = None
+        # if self._video_writer:
+        #     self._video_writer.release()
+        #     self._video_writer = None
         self._recording_active = False
         fname = self._recording_file
         self._recording_start = None
