@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .viewer import main
+from .run_daemon import main
 
 if __name__ == "__main__":
     main()

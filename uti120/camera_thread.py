@@ -13,7 +13,7 @@ from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot
 
 from .constants import (
     DISPLAY_WIDTH, DISPLAY_HEIGHT,
-    STATUS_IDLE, STATUS_IMAGE_UPLOAD, default_save_dir,
+    STATUS_IDLE, STATUS_IMAGE_UPLOAD,
     RECONNECT_FAIL_THRESHOLD,
 )
 from .camera import UTi120Camera
@@ -23,6 +23,7 @@ from .calibration import (
     CalibrationPackage,
 )
 from .shutter_handler import ShutterHandler
+from .config import DaemonConfig
 
 __all__ = ["CameraThread"]
 
@@ -36,15 +37,14 @@ class CameraThread(QThread):
     status_message = pyqtSignal(str)
     camera_ready = pyqtSignal()
     init_failed = pyqtSignal(str)
-    def __init__(self, parent: QThread | None = None) -> None:
+    def __init__(self, config: DaemonConfig, parent: QThread | None = None) -> None:
         super().__init__(parent)
         self.camera = UTi120Camera()
-        self.processor = FrameProcessor()
+        self.processor = FrameProcessor(config)
         self.shutter_handler = ShutterHandler()
         self.running = False
         self._do_shutter = False
         self._do_nuc = False
-        self.save_dir = default_save_dir()
 
     def run(self) -> None:
         self.running = True
@@ -172,9 +172,11 @@ class CameraThread(QThread):
             fail_count = 0
 
             # Process
+            start_time = time.time()
             colored = self.processor.process(raw)
             if colored is None:
                 continue
+            logger.debug(f"processing took {time.time() - start_time} s")
 
             # Auto-recalibration
             action = self.shutter_handler.check(self.processor.fpa_temp, self.processor.frame_counter)
@@ -204,11 +206,12 @@ class CameraThread(QThread):
                 self.status_message.emit("Streaming")
                 continue
 
-            # Resize for display
-            display = cv2.resize(colored, (DISPLAY_WIDTH, DISPLAY_HEIGHT),
-                                 interpolation=cv2.INTER_NEAREST)
+            start_time = time.time()
+            upscaled = self.processor.upscale(colored, DISPLAY_WIDTH, DISPLAY_HEIGHT)
+            logger.debug(f"upscaling took {time.time() - start_time} s")
 
-            self.frame_ready.emit(display, self.processor)
+
+            self.frame_ready.emit(upscaled, self.processor)
 
         self.camera.close()
 

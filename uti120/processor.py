@@ -11,15 +11,16 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import cv2
+import cv2.dnn_superres
 from scipy.ndimage import median_filter
 
 from .constants import (
     FRAME_SIZE, FRAME_WIDTH, FRAME_HEIGHT, FRAME_PIXELS, PIXEL_OFFSET,
     HDR_FRAME_COUNTER, HDR_SHUTTER_TEMP_RT, HDR_LENS_TEMP, HDR_FP_TEMP, HDR_SHUTTER_TEMP_START,
-    DEFAULT_PALETTE_IDX, DEFAULT_EMISSIVITY, DEFAULT_CONTRAST,
+    DEFAULT_EMISSIVITY, DEFAULT_CONTRAST,
     DEFAULT_AMBIENT_TEMP, FPA_SMOOTH_WINDOW, DEFAULT_TFF_STD,
     TEMP_MARGIN, RANGE_SWITCH_UP_C, RANGE_SWITCH_DOWN_C,
-    RANGE_SWITCH_COOLDOWN_S,
+    RANGE_SWITCH_COOLDOWN_S, UPSCALING_METHODS
 )
 from .palettes import apply_palette
 from .calibration import (
@@ -27,23 +28,24 @@ from .calibration import (
     y16_to_temperature_interpolated, lens_drift_correct_zx01c,
     emiss_correct,
 )
+from .config import DaemonConfig
 
 if TYPE_CHECKING:
     from .calibration import CalibrationPackage
 
-__all__ = ["FrameProcessor"]
-
 logger = logging.getLogger(__name__)
+
 
 
 class FrameProcessor:
     """Process raw frame data into thermal images."""
 
-    def __init__(self) -> None:
-        self.palette_idx = DEFAULT_PALETTE_IDX
+    def __init__(self, config: DaemonConfig) -> None:
+        self.palette = config.palette
         self._last_normalized = None
-        self.flip = False
-        self.rotation = 0  # 0, 90, 180, 270 degrees clockwise
+        self.flip = config.flip
+        self.rotation = config.rotate_deg  # 0, 90, 180, 270 degrees clockwise
+        self.upscaling_method = config.upscaling_method # trivial, simple, cnn
         self.min_temp = 0.0
         self.max_temp = 0.0
         self.center_temp = 0.0
@@ -103,6 +105,8 @@ class FrameProcessor:
         self._tff_prev = None
         self._tff_weights = None
         self._build_tff_weights()
+        # super-resolution filter
+        self.sr_impl = None
 
     def _load_flatfield(self) -> None:
         """Load flat-field FPN correction map if available."""
@@ -493,7 +497,51 @@ class FrameProcessor:
             normalized = cv2.rotate(normalized, cv2.ROTATE_90_COUNTERCLOCKWISE)
 
         self._last_normalized = normalized
-        return apply_palette(normalized, self.palette_idx)
+        return apply_palette(normalized, self.palette)
+    
+
+    def upscale(self, input: np.ndarray, w: int, h: int) -> np.ndarray:
+        match self.upscaling_method:
+            case "trivial":
+                return self._upscale_trivial(input, w, h)
+            case "simple":
+                return self._upscale_simple(input, w, h)
+            case "cnn":
+                return self._upscale_cnn(input, w, h)
+            case _:
+                raise ValueError(f"Upscaling method {self.upscaling_method} not known")
+
+
+    def _upscale_trivial(self, lowres: np.ndarray, w: int, h: int) -> np.ndarray:
+        """original trivial, blocky upscaling"""
+        return cv2.resize(lowres, (w, h), interpolation=cv2.INTER_NEAREST)
+
+
+    def _upscale_simple(self, lowres: np.ndarray, w: int, h: int) -> np.ndarray:
+        """some prettier upscaling and sharpening"""
+        highres = cv2.resize(lowres, (w, h), interpolation=cv2.INTER_LANCZOS4)
+        kernel = np.array([[0, -1, 0],
+                           [-1, 5, -1],
+                           [0, -1, 0]])
+        sharpened = cv2.filter2D(highres, -1, kernel)
+        return sharpened
+    
+    def _upscale_cnn(self, lowres: np.ndarray, w: int, h: int) -> np.ndarray:
+        """CNN super-resolution black magic"""
+        if self.sr_impl is None:
+            self.sr_impl = cv2.dnn_superres.DnnSuperResImpl_create()
+            self.sr_impl.readModel("ESPCN_x4.pb")
+            self.sr_impl.setModel("espcn", 4)
+            # TODO: we never check this...
+            logger.info("Read espcn model")
+
+        upsampled = self.sr_impl.upsample(lowres)
+        # print(f"upsampled dims {lowres.shape}=>{upsampled.shape} output {w}x{h}")
+        # interpolate and sharpen for good measure
+        return self._upscale_simple(upsampled, w, h)
+        
+
+
 
     def unlock_range(self) -> None:
         """Unlock color scale to resume auto-scaling."""

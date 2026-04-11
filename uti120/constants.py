@@ -86,23 +86,6 @@ RANGE_SWITCH_COOLDOWN_S = 5.0     # seconds between range switches
 STATS_UPDATE_INTERVAL_MS = 250    # temperature label refresh
 GRAPH_SAMPLE_INTERVAL_MS = 500    # graph data sampling rate
 
-# Limits
-MAX_PROBES = 10                   # maximum pinned temperature probes
-
-# Alarm
-ALARM_TEMP_MIN = -20
-ALARM_TEMP_MAX = 400
-ALARM_HYSTERESIS_DEFAULT = 0.5
-ALARM_SOURCES = [
-    ("Center", "center"),
-    ("Global MAX", "global_max"),
-    ("Global MIN", "global_min"),
-    ("ROI Center", "roi_center"),
-    ("ROI Avg", "roi_avg"),
-    ("ROI MAX", "roi_max"),
-    ("ROI MIN", "roi_min"),
-    ("Mouse", "mouse"),
-]
 VIDEO_FPS = 25                    # recording framerate
 RECONNECT_FAIL_THRESHOLD = 20     # consecutive failed frames before reconnect
 
@@ -132,10 +115,9 @@ EMISSIVITY_PRESETS = [
     ("Polished Metal", 0.10),
 ]
 
+UPSCALING_METHODS = [
+    "trivial", # blocky
+    "simple",  # interpolate and sharpen
+    "cnn"      # magic
+]
 
-def default_save_dir() -> Path:
-    """Return the default directory for saving screenshots, videos, and CSVs."""
-    home = Path.home()
-    if sys.platform == 'win32':
-        return home / 'Documents' / 'UTi120'
-    return home / 'Pictures' / 'UTi120'

@@ -16,8 +16,6 @@ try:
 except ImportError as exc:
     raise ImportError("pyusb not installed. Run: pip install pyusb") from exc
 
-__all__ = ["UTi120Camera"]
-
 logger = logging.getLogger(__name__)
 
 from .constants import (

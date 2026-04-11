@@ -10,8 +10,6 @@ from __future__ import annotations
 import logging
 import time
 
-__all__ = ["ShutterHandler"]
-
 logger = logging.getLogger(__name__)
 
 
