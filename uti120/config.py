@@ -20,12 +20,13 @@ class DaemonConfig:
     flip: bool = False
     debug_ffmpeg: bool = False
 
+
 def argparse_config() -> DaemonConfig:
     parser = argparse.ArgumentParser()
     config = DaemonConfig()
     for dc_field in fields(DaemonConfig):
         if dc_field.type == bool:
-            action=argparse.BooleanOptionalAction
+            action = argparse.BooleanOptionalAction
         else:
             action = "store"
         if dc_field.name == "upscaling_method":
@@ -34,12 +35,17 @@ def argparse_config() -> DaemonConfig:
             choices = PALETTES.keys()
         else:
             choices = None
-        parser.add_argument("--" + dc_field.name, type=dc_field.type, 
-                    help=f"{dc_field.type.__name__} (=\t{dc_field.default})", action=action, choices=choices)
+        parser.add_argument(
+            "--" + dc_field.name,
+            type=dc_field.type,
+            help=f"{dc_field.type.__name__} (=\t{dc_field.default})",
+            action=action,
+            choices=choices,
+        )
 
     args = parser.parse_args()
     for arg_name, arg_value in vars(args).items():
-        if not arg_value == None:
+        if arg_value is not None:
             setattr(config, arg_name, arg_value)
             logger.info(f"set {arg_name} to {arg_value}")
     return config

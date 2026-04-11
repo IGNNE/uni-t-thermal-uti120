@@ -6,7 +6,8 @@ from PyQt6.QtCore import QCoreApplication
 import logging
 
 from .daemon import Daemon
-from .config import argparse_config, DaemonConfig
+from .config import argparse_config
+
 
 def main() -> None:
     """Entry point for the thermal daemon."""

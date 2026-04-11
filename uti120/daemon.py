@@ -3,7 +3,7 @@
 import logging
 import subprocess
 import os.path
-from typing import TYPE_CHECKING, Optional, Tuple
+from typing import Tuple
 
 import cv2
 import numpy as np
@@ -13,20 +13,20 @@ from PyQt6.QtCore import pyqtSlot, QObject
 
 from .processor import FrameProcessor
 from .camera_thread import CameraThread
-from .constants import (
-    DISPLAY_WIDTH,
-    DISPLAY_HEIGHT,
-    FRAME_HEIGHT,
-    FRAME_WIDTH
-)
+from .constants import DISPLAY_WIDTH, DISPLAY_HEIGHT, FRAME_HEIGHT, FRAME_WIDTH
 from .palettes import apply_palette
 from .config import DaemonConfig
 
 logger = logging.getLogger(__name__)
 
+
 class Daemon(QObject):
 
-    def __init__(self, config: DaemonConfig, parent: QObject | None = None, ) -> None:
+    def __init__(
+        self,
+        config: DaemonConfig,
+        parent: QObject | None = None,
+    ) -> None:
         super().__init__(parent)
 
         # Camera thread
@@ -43,31 +43,40 @@ class Daemon(QObject):
         self.config = config
 
     def start(self) -> None:
-        assert self.ffmpeg_process == None and not self.cam_thread.isRunning()
+        assert self.ffmpeg_process is None and not self.cam_thread.isRunning()
 
         if not os.path.exists(self.config.dev_video_file):
-            logger.error(f"Webcam file {self.config.dev_video_file} does not exist. You need to set up v4l2loopback and point this daemon at the newly created /dev/videoX")
+            logger.error(
+                f"Webcam file {self.config.dev_video_file} does not exist. You need to set up "
+                + "v4l2loopback and point this daemon at the newly created /dev/videoX"
+            )
             raise FileNotFoundError("Webcam file does not exist")
 
         # one-time setup of ffmpeg
         # I am deliberately not using PyAV, there are enough dependencies in the world already
         # plus, plain old `ffmpeg -do-stuff` does the job just fine
         #
-        self.ffmpeg_process = subprocess.Popen((f"ffmpeg -y -f rawvideo -vcodec rawvideo -pix_fmt bgr24 -s {DISPLAY_WIDTH}x{DISPLAY_HEIGHT} " +
-                                               f"-r 25 -i - -vf format=yuv420p -f v4l2 {self.config.dev_video_file}").split(),
+        self.ffmpeg_process = subprocess.Popen(
+            (
+                "ffmpeg -y -f rawvideo -vcodec rawvideo -pix_fmt bgr24 "
+                + f"-s {DISPLAY_WIDTH}x{DISPLAY_HEIGHT} "
+                + f"-r 25 -i - -vf format=yuv420p -f v4l2 {self.config.dev_video_file}"
+            ).split(),
             stderr=subprocess.STDOUT,
             stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE)
+            stdout=subprocess.PIPE,
+        )
         # hack for debugging
         if self.config.debug_ffmpeg:
             import threading
+
             def print_ffmpeg_output():
                 for line in self.ffmpeg_process.stdout:
-                    logger.info(" ffmpeg " + line.decode('utf-8').strip())
+                    logger.info(" ffmpeg " + line.decode("utf-8").strip())
+
             threading.Thread(target=print_ffmpeg_output, daemon=True).start()
         self.cam_thread.start()
         logger.info("Daemon started")
-
 
     @pyqtSlot(object, object)
     def _on_frame(self, display_bgr: np.ndarray, processor: FrameProcessor) -> None:
@@ -83,9 +92,7 @@ class Daemon(QObject):
         self.ffmpeg_process.stdin.write(display_bgr)
         self.ffmpeg_process.stdin.write(display_bgr)
 
-
-    def _draw_overlay(self, frame: np.ndarray, proc: FrameProcessor,
-                      w: int, h: int):
+    def _draw_overlay(self, frame: np.ndarray, proc: FrameProcessor, w: int, h: int):
         """Draw temperature overlay elements using OpenCV
 
         Bits and pieces vibe-coded based on a down-stripped version of the original function
@@ -94,11 +101,26 @@ class Daemon(QObject):
         """
 
         def pretty_put_text(frame: np.ndarray, text: str, coords: Tuple[int, int]):
-            cv2.putText(frame, text, coords,
-                cv2.FONT_HERSHEY_DUPLEX, 0.5, (0, 0, 0), 2, cv2.LINE_AA)
-            cv2.putText(frame, text, coords,
-                cv2.FONT_HERSHEY_DUPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
-
+            cv2.putText(
+                frame,
+                text,
+                coords,
+                cv2.FONT_HERSHEY_DUPLEX,
+                0.5,
+                (0, 0, 0),
+                2,
+                cv2.LINE_AA,
+            )
+            cv2.putText(
+                frame,
+                text,
+                coords,
+                cv2.FONT_HERSHEY_DUPLEX,
+                0.5,
+                (255, 255, 255),
+                1,
+                cv2.LINE_AA,
+            )
 
         # TODO: wait a minute. Do we overwrite some of our already-scarce pixels for the colorbar?
         # it is the same in the old qt version, btw
@@ -148,29 +170,41 @@ class Daemon(QObject):
             bar_strip = np.repeat(bar_colored, bar_w, axis=1)
 
             # Draw the color bar
-            frame[bar_top:bar_bottom, bar_x:bar_x+bar_w] = bar_strip
+            frame[bar_top:bar_bottom, bar_x : bar_x + bar_w] = bar_strip
 
             # Draw border
-            cv2.rectangle(frame, (bar_x, bar_top), (bar_x + bar_w, bar_bottom), (200, 200, 200), 1)
+            cv2.rectangle(
+                frame, (bar_x, bar_top), (bar_x + bar_w, bar_bottom), (200, 200, 200), 1
+            )
 
             # Draw labels
             pretty_put_text(frame, f"{proc.max_temp:.0f}C", (bar_x - 5, bar_top - 5))
-            pretty_put_text(frame, f"{proc.min_temp:.0f}C", (bar_x - 5, bar_bottom + 15))
+            pretty_put_text(
+                frame, f"{proc.min_temp:.0f}C", (bar_x - 5, bar_bottom + 15)
+            )
 
-
-
-    def _sensor_to_img(self, sensor_x: int, sensor_y: int, rotation: int = 0, flip: bool = False) -> tuple[int, int]:
+    def _sensor_to_img(
+        self, sensor_x: int, sensor_y: int, rotation: int = 0, flip: bool = False
+    ) -> tuple[int, int]:
         W, H = DISPLAY_WIDTH, DISPLAY_HEIGHT
         dx = (W - 1 - sensor_x) if flip else sensor_x
         dy = sensor_y
         if rotation == 90:
             dx, dy = H - 1 - dy, dx
-            return round(dx * DISPLAY_WIDTH / FRAME_HEIGHT), round(dy * DISPLAY_HEIGHT / FRAME_WIDTH)
+            return round(dx * DISPLAY_WIDTH / FRAME_HEIGHT), round(
+                dy * DISPLAY_HEIGHT / FRAME_WIDTH
+            )
         elif rotation == 180:
             dx, dy = W - 1 - dx, H - 1 - dy
-            return round(dx * DISPLAY_WIDTH / FRAME_WIDTH), round(dy * DISPLAY_HEIGHT / FRAME_HEIGHT)
+            return round(dx * DISPLAY_WIDTH / FRAME_WIDTH), round(
+                dy * DISPLAY_HEIGHT / FRAME_HEIGHT
+            )
         elif rotation == 270:
             dx, dy = dy, W - 1 - dx
-            return round(dx * DISPLAY_WIDTH / FRAME_HEIGHT), round(dy * DISPLAY_HEIGHT / FRAME_WIDTH)
+            return round(dx * DISPLAY_WIDTH / FRAME_HEIGHT), round(
+                dy * DISPLAY_HEIGHT / FRAME_WIDTH
+            )
         else:
-            return round(dx * DISPLAY_WIDTH / FRAME_WIDTH), round(dy * DISPLAY_HEIGHT / FRAME_HEIGHT)
+            return round(dx * DISPLAY_WIDTH / FRAME_WIDTH), round(
+                dy * DISPLAY_HEIGHT / FRAME_HEIGHT
+            )

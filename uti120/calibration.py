@@ -3,6 +3,7 @@
 Reconstructed from libguide_sdk_unitrend.so disassembly analysis.
 Reconstructed from libguide_sdk_unitrend.so x86_64 disassembly.
 """
+
 from __future__ import annotations
 
 import logging
@@ -12,9 +13,8 @@ from pathlib import Path
 
 import numpy as np
 
-from .constants import FRAME_WIDTH, FRAME_HEIGHT
-
 logger = logging.getLogger(__name__)
+
 
 class CalibrationPackage:
     """Parsed calibration package from device flash.
@@ -26,36 +26,39 @@ class CalibrationPackage:
         Section 2: Per-pixel gain correction tables (7 * 90 * 120 uint16)
     """
 
-    def __init__(self, filepath: str | Path | None = None, data: bytes | None = None) -> None:
+    def __init__(
+        self, filepath: str | Path | None = None, data: bytes | None = None
+    ) -> None:
         if data is not None:
             self.raw = bytes(data)
         elif filepath is not None:
-            with open(filepath, 'rb') as f:
+            with open(filepath, "rb") as f:
                 self.raw = f.read()
         else:
             raise ValueError("Either filepath or data must be provided")
 
-        self.header_size = struct.unpack('<I', self.raw[0:4])[0]
+        self.header_size = struct.unpack("<I", self.raw[0:4])[0]
         assert self.header_size == 216
 
         method_end = self.raw.index(0, 4)
-        self.method = self.raw[4:method_end].decode('ascii')
+        self.method = self.raw[4:method_end].decode("ascii")
 
         self.range_id = self.raw[0x40]
         self.version = self.raw[0x41]
-        self.min_ref = struct.unpack('<h', self.raw[0x42:0x44])[0]
-        self.t_val2 = struct.unpack('<H', self.raw[0x46:0x48])[0]
+        self.min_ref = struct.unpack("<h", self.raw[0x42:0x44])[0]
+        self.t_val2 = struct.unpack("<H", self.raw[0x46:0x48])[0]
         self.focus_count = self.raw[0x4B]
-        self.width = struct.unpack('<H', self.raw[0x4C:0x4E])[0]
-        self.height = struct.unpack('<H', self.raw[0x4E:0x50])[0]
-        self.curve_steps = struct.unpack('<H', self.raw[0x50:0x52])[0]
-        self.focus_len = struct.unpack('<H', self.raw[0x52:0x54])[0]
-        self.section1_size = struct.unpack('<I', self.raw[0x54:0x58])[0]
-        self.section2_size = struct.unpack('<I', self.raw[0x58:0x5C])[0]
+        self.width = struct.unpack("<H", self.raw[0x4C:0x4E])[0]
+        self.height = struct.unpack("<H", self.raw[0x4E:0x50])[0]
+        self.curve_steps = struct.unpack("<H", self.raw[0x50:0x52])[0]
+        self.focus_len = struct.unpack("<H", self.raw[0x52:0x54])[0]
+        self.section1_size = struct.unpack("<I", self.raw[0x54:0x58])[0]
+        self.section2_size = struct.unpack("<I", self.raw[0x58:0x5C])[0]
 
         # Sub-header
-        self.sub_header_size = (len(self.raw) - self.header_size) - \
-                               (self.section1_size + self.section2_size)
+        self.sub_header_size = (len(self.raw) - self.header_size) - (
+            self.section1_size + self.section2_size
+        )
         self.section1_start = self.header_size + self.sub_header_size
         self.section2_start = self.section1_start + self.section1_size
 
@@ -65,24 +68,30 @@ class CalibrationPackage:
         focus_start = self.section1_start - self.focus_len
         self.focus_buf = []
         for i in range(0, self.focus_len, 2):
-            val = struct.unpack('<h', self.raw[focus_start + i:
-                                              focus_start + i + 2])[0]
+            val = struct.unpack("<h", self.raw[focus_start + i : focus_start + i + 2])[
+                0
+            ]
             self.focus_buf.append(val)
 
         # Section 1: Curve data
-        sec1_data = self.raw[self.section1_start:self.section2_start]
-        self.curves = np.frombuffer(sec1_data, dtype='<u2').copy()
+        sec1_data = self.raw[self.section1_start : self.section2_start]
+        self.curves = np.frombuffer(sec1_data, dtype="<u2").copy()
 
         expected = self.version * self.focus_count * self.curve_steps
-        assert len(self.curves) == expected, \
-            f"Section 1 size mismatch: {len(self.curves)} != {expected}"
+        assert (
+            len(self.curves) == expected
+        ), f"Section 1 size mismatch: {len(self.curves)} != {expected}"
 
         # Section 2: Per-pixel gain correction tables
-        sec2_data = self.raw[self.section2_start:
-                             self.section2_start + self.section2_size]
+        sec2_data = self.raw[
+            self.section2_start : self.section2_start + self.section2_size
+        ]
         n_tables = self.section2_size // (2 * self.width * self.height)
-        self.corrections = np.frombuffer(sec2_data, dtype='<u2').reshape(
-            n_tables, self.height, self.width).copy()
+        self.corrections = (
+            np.frombuffer(sec2_data, dtype="<u2")
+            .reshape(n_tables, self.height, self.width)
+            .copy()
+        )
 
         # Sensor hardware parameters (used for range switching USB command)
         self.sensor_gain = self.raw[0x46]
@@ -94,7 +103,7 @@ class CalibrationPackage:
         # (ARM64 guideCoreParsePackage: HOST_PARAM[0x28 + i*4] = DataHeader[0x74 + i*2] / 10.0)
         self.focus_distance_params = []
         for i in range(self.focus_count):
-            val = struct.unpack('<H', self.raw[0x74 + i * 2:0x76 + i * 2])[0]
+            val = struct.unpack("<H", self.raw[0x74 + i * 2 : 0x76 + i * 2])[0]
             self.focus_distance_params.append(val / 10.0)
 
         self.core_body_temp = float(self.min_ref)
@@ -106,7 +115,7 @@ class CalibrationPackage:
         block_size = self.curve_steps
         stride = self.focus_count * block_size
         start = version_idx * stride + focus_idx * block_size
-        return self.curves[start:start + block_size]
+        return self.curves[start : start + block_size]
 
     def get_nuc_gain(self, version_idx: int) -> np.ndarray:
         """Get per-pixel NUC gain for a given version set.
@@ -135,12 +144,16 @@ class CalibrationPackage:
 
     def __repr__(self) -> str:
         name = "LOW" if self.range_id == 0 else "HIGH"
-        return (f"CalibrationPackage({name}, "
-                f"range={self.temp_min:.1f} to {self.temp_max:.1f}°C, "
-                f"steps={self.curve_steps})")
+        return (
+            f"CalibrationPackage({name}, "
+            f"range={self.temp_min:.1f} to {self.temp_max:.1f}°C, "
+            f"steps={self.curve_steps})"
+        )
 
 
-def get_curve_segments(calib: CalibrationPackage, fpa_temp_raw: int) -> tuple[list[np.ndarray], int, float]:
+def get_curve_segments(
+    calib: CalibrationPackage, fpa_temp_raw: int
+) -> tuple[list[np.ndarray], int, float]:
     """Select 4 curve segments based on FPA temperature.
 
     Reconstructs getCurve() (0x155b0) logic: finds the version set bracket
@@ -184,8 +197,9 @@ def get_curve_segments(calib: CalibrationPackage, fpa_temp_raw: int) -> tuple[li
         lower_bracket = focus_buf[vi]
         upper_bracket = focus_buf[vi_next]
         if upper_bracket != lower_bracket:
-            fpa_weight = float(upper_bracket - fpa_temp_raw) / \
-                         float(upper_bracket - lower_bracket)
+            fpa_weight = float(upper_bracket - fpa_temp_raw) / float(
+                upper_bracket - lower_bracket
+            )
             fpa_weight = max(0.0, min(1.0, fpa_weight))
         else:
             fpa_weight = 1.0
@@ -204,13 +218,17 @@ def get_curve_segments(calib: CalibrationPackage, fpa_temp_raw: int) -> tuple[li
 # ============================================================================
 
 # LensDriftCorrectZX01C constants
-_LENS_DRIFT_MIN_THRESHOLD = 0.1   # 0x42d30
-_LENS_DRIFT_COEFF_LOW = -300.0    # from rodata 0x42a10 (MP[0x78])
-_LENS_DRIFT_COEFF_HIGH = -200.0   # from rodata 0x42a10 (MP[0x74])
+_LENS_DRIFT_MIN_THRESHOLD = 0.1  # 0x42d30
+_LENS_DRIFT_COEFF_LOW = -300.0  # from rodata 0x42a10 (MP[0x78])
+_LENS_DRIFT_COEFF_HIGH = -200.0  # from rodata 0x42a10 (MP[0x74])
 
 
-def lens_drift_correct_zx01c(current_lens_temp: float, nuc_lens_temp: float,
-                              nuc_fpa_temp: float, is_high: bool = False) -> float:
+def lens_drift_correct_zx01c(
+    current_lens_temp: float,
+    nuc_lens_temp: float,
+    nuc_fpa_temp: float,
+    is_high: bool = False,
+) -> float:
     """LensDriftCorrectZX01C (0x21110) — lens temperature drift correction.
 
     Compensates for lens warming/cooling affecting sensor readings.
@@ -234,9 +252,16 @@ def lens_drift_correct_zx01c(current_lens_temp: float, nuc_lens_temp: float,
     return (current_lens_temp - nuc_lens_temp) * coeff
 
 
-def y16_to_temperature_array(y16_array: np.ndarray, curve_buf: np.ndarray, curve_steps: int, core_body_temp: float,
-                              shutter_temp: float = 25.0, coeff: float = 1.0,
-                              shutter_drift: float = 0.0, lens_drift: float = 0.0) -> np.ndarray:
+def y16_to_temperature_array(
+    y16_array: np.ndarray,
+    curve_buf: np.ndarray,
+    curve_steps: int,
+    core_body_temp: float,
+    shutter_temp: float = 25.0,
+    coeff: float = 1.0,
+    shutter_drift: float = 0.0,
+    lens_drift: float = 0.0,
+) -> np.ndarray:
     """Vectorized Y16-to-temperature conversion for an entire frame.
 
     Implements the core of GetSingleCurveTemperatures in vectorized form:
@@ -279,18 +304,24 @@ def y16_to_temperature_array(y16_array: np.ndarray, curve_buf: np.ndarray, curve
 
     lookup_vals = (y16_float * coeff + bias).astype(np.int32)
 
-    indices = np.searchsorted(curve_buf, lookup_vals, side='right') - 1
+    indices = np.searchsorted(curve_buf, lookup_vals, side="right") - 1
     indices = np.clip(indices, 0, curve_steps - 1)
 
     temps = indices.astype(np.float64) / 10.0 + core_body_temp
     return temps
 
 
-def y16_to_temperature_interpolated(y16_array: np.ndarray, segments: list[np.ndarray], fpa_weight: float,
-                                     curve_steps: int, core_body_temp: float,
-                                     shutter_temp: float = 25.0, lens_drift: float = 0.0,
-                                     distance: float = 1.0,
-                                     focus_distance_params: list[float] | None = None) -> np.ndarray:
+def y16_to_temperature_interpolated(
+    y16_array: np.ndarray,
+    segments: list[np.ndarray],
+    fpa_weight: float,
+    curve_steps: int,
+    core_body_temp: float,
+    shutter_temp: float = 25.0,
+    lens_drift: float = 0.0,
+    distance: float = 1.0,
+    focus_distance_params: list[float] | None = None,
+) -> np.ndarray:
     """Multi-curve bilinear temperature conversion (ARM64-confirmed).
 
     Uses all 4 curve segments with two interpolation dimensions,
@@ -316,8 +347,13 @@ def y16_to_temperature_interpolated(y16_array: np.ndarray, segments: list[np.nda
     temps = []
     for curve in segments:
         t = y16_to_temperature_array(
-            y16_array, curve, curve_steps, core_body_temp,
-            shutter_temp=shutter_temp, lens_drift=lens_drift)
+            y16_array,
+            curve,
+            curve_steps,
+            core_body_temp,
+            shutter_temp=shutter_temp,
+            lens_drift=lens_drift,
+        )
         temps.append(t)
 
     # Focus distance weights (ARM64 GetLowTemperature lines 273-287)
@@ -338,8 +374,9 @@ def y16_to_temperature_interpolated(y16_array: np.ndarray, segments: list[np.nda
 
     # Bilinear interpolation: FPA weight × focus distance weight
     # ARM64: result = (f1_temps * fpa_w) * focus1_w + (f0_temps * fpa_w) * focus0_w
-    result = ((temps[1] * fpa_weight + temps[3] * (1.0 - fpa_weight)) * focus1_w +
-              (temps[0] * fpa_weight + temps[2] * (1.0 - fpa_weight)) * focus0_w)
+    result = (temps[1] * fpa_weight + temps[3] * (1.0 - fpa_weight)) * focus1_w + (
+        temps[0] * fpa_weight + temps[2] * (1.0 - fpa_weight)
+    ) * focus0_w
     return result
 
 
@@ -349,7 +386,7 @@ def _load_nemiss_curve() -> np.ndarray:
     The table maps radiance indices to temperature × 10 (e.g., 354 = 35.4°C).
     Monotonically increasing, range -450 to 8500 (-45.0°C to 850.0°C).
     """
-    path = Path(__file__).resolve().parent / 'data' / 'nEmissCurve.npy'
+    path = Path(__file__).resolve().parent / "data" / "nEmissCurve.npy"
     table = np.load(str(path)).view(np.int16)
     assert table.shape == (16384,), f"nEmissCurve shape mismatch: {table.shape}"
     return table
@@ -367,8 +404,14 @@ def _get_nemiss_curve() -> np.ndarray:
     return _nemiss_curve
 
 
-def emiss_correct(temp_celsius: np.ndarray, ambient_temp: float, emissivity: float, curve: np.ndarray, curve_steps: int,
-                  core_body_temp: float) -> np.ndarray:
+def emiss_correct(
+    temp_celsius: np.ndarray,
+    ambient_temp: float,
+    emissivity: float,
+    curve: np.ndarray,
+    curve_steps: int,
+    core_body_temp: float,
+) -> np.ndarray:
     """Apply emissivity correction using the native nEmissCurve table.
 
     Reimplementation of the native EmissCor() function from
@@ -409,12 +452,12 @@ def emiss_correct(temp_celsius: np.ndarray, ambient_temp: float, emissivity: flo
     # Vectorized binary search: temp×10 → index in nEmissCurve
     flat = temp_celsius.ravel()
     meas_t10 = (flat * 10.0).astype(np.int16)
-    meas_idx = np.searchsorted(nemiss, meas_t10, side='right') - 1
+    meas_idx = np.searchsorted(nemiss, meas_t10, side="right") - 1
     meas_idx = np.clip(meas_idx, 0, 0x3FFF)
 
     # Scalar: ambient → index
     amb_t10 = np.int16(ambient_temp * 10.0)
-    amb_idx = int(np.searchsorted(nemiss, amb_t10, side='right') - 1)
+    amb_idx = int(np.searchsorted(nemiss, amb_t10, side="right") - 1)
     amb_idx = max(0, min(0x3FFF, amb_idx))
 
     # Radiometric correction in index (radiance) space
@@ -439,18 +482,18 @@ def validate_calibration_file(path: str | Path) -> bool:
         size = Path(path).stat().st_size
         if size < 216:
             return False
-        with open(path, 'rb') as f:
+        with open(path, "rb") as f:
             hdr = f.read(0x5C)
         if len(hdr) < 0x5C:
             return False
-        header_size = struct.unpack('<I', hdr[0:4])[0]
+        header_size = struct.unpack("<I", hdr[0:4])[0]
         if header_size != 216:
             return False
         range_id = hdr[0x40]
         if range_id not in (0, 1):
             return False
-        section1_size = struct.unpack('<I', hdr[0x54:0x58])[0]
-        section2_size = struct.unpack('<I', hdr[0x58:0x5C])[0]
+        section1_size = struct.unpack("<I", hdr[0x54:0x58])[0]
+        section2_size = struct.unpack("<I", hdr[0x58:0x5C])[0]
         # File must be large enough for header + sections
         if size < header_size + section1_size + section2_size:
             return False
@@ -462,19 +505,19 @@ def validate_calibration_file(path: str | Path) -> bool:
 def _calibration_cache_dir() -> Path:
     """Return the OS-appropriate cache directory for calibration files."""
     import sys
-    if sys.platform == 'win32':
-        base = Path.home() / 'AppData' / 'Local'
-    elif sys.platform == 'darwin':
-        base = Path.home() / 'Library' / 'Caches'
+
+    if sys.platform == "win32":
+        base = Path.home() / "AppData" / "Local"
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Caches"
     else:
-        base = Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache'))
-    return base / 'uti120'
+        base = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    return base / "uti120"
 
 
 def _cache_path() -> Path:
     """Return the path to the single calibration cache file."""
-    return _calibration_cache_dir() / 'calibration_cache.npz'
-
+    return _calibration_cache_dir() / "calibration_cache.npz"
 
 
 def load_calibration_cache(serial: str) -> dict[int, CalibrationPackage] | None:
@@ -492,30 +535,36 @@ def load_calibration_cache(serial: str) -> dict[int, CalibrationPackage] | None:
         return None
     try:
         with np.load(path, allow_pickle=False) as data:
-            cached_serial = bytes(data['serial']).decode('utf-8')
+            cached_serial = bytes(data["serial"]).decode("utf-8")
             if cached_serial != serial:
-                logger.info("Calibration cache serial mismatch: "
-                            "cached=%s, device=%s", cached_serial, serial)
+                logger.info(
+                    "Calibration cache serial mismatch: " "cached=%s, device=%s",
+                    cached_serial,
+                    serial,
+                )
                 path.unlink()
                 return None
             pkgs: dict[int, CalibrationPackage] = {}
-            for range_id, key in [(0, 'low_temp'), (1, 'high_temp')]:
+            for range_id, key in [(0, "low_temp"), (1, "high_temp")]:
                 if key in data and len(data[key]) > 0:
-                    pkgs[range_id] = CalibrationPackage(
-                        data=bytes(data[key]))
+                    pkgs[range_id] = CalibrationPackage(data=bytes(data[key]))
             return pkgs if pkgs else None
-    except (OSError, KeyError, struct.error, ValueError,
-            AssertionError, UnicodeDecodeError) as e:
+    except (
+        OSError,
+        KeyError,
+        struct.error,
+        ValueError,
+        AssertionError,
+        UnicodeDecodeError,
+    ) as e:
         logger.warning("Failed to load calibration cache: %s", e)
         path.unlink(missing_ok=True)
         return None
 
 
-
-
-def save_calibration_cache(serial: str,
-                           low_data: bytes | None,
-                           high_data: bytes | None) -> None:
+def save_calibration_cache(
+    serial: str, low_data: bytes | None, high_data: bytes | None
+) -> None:
     """Save calibration data and camera serial to a single cache file.
 
     Args:
@@ -526,12 +575,12 @@ def save_calibration_cache(serial: str,
     cache_dir = _calibration_cache_dir()
     cache_dir.mkdir(parents=True, exist_ok=True)
     arrays: dict[str, np.ndarray] = {
-        'serial': np.frombuffer(serial.encode('utf-8'), dtype=np.uint8),
+        "serial": np.frombuffer(serial.encode("utf-8"), dtype=np.uint8),
     }
     if low_data:
-        arrays['low_temp'] = np.frombuffer(low_data, dtype=np.uint8)
+        arrays["low_temp"] = np.frombuffer(low_data, dtype=np.uint8)
     if high_data:
-        arrays['high_temp'] = np.frombuffer(high_data, dtype=np.uint8)
+        arrays["high_temp"] = np.frombuffer(high_data, dtype=np.uint8)
     path = _cache_path()
     np.savez(path, **arrays)
     logger.info("Saved calibration cache to %s (serial=%s)", path, serial)

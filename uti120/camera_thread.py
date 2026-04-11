@@ -5,21 +5,22 @@ from __future__ import annotations
 import logging
 import struct
 import time
-from pathlib import Path
 
-import cv2
 import usb.core
 from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot
 
 from .constants import (
-    DISPLAY_WIDTH, DISPLAY_HEIGHT,
-    STATUS_IDLE, STATUS_IMAGE_UPLOAD,
+    DISPLAY_WIDTH,
+    DISPLAY_HEIGHT,
+    STATUS_IDLE,
+    STATUS_IMAGE_UPLOAD,
     RECONNECT_FAIL_THRESHOLD,
 )
 from .camera import UTi120Camera
 from .processor import FrameProcessor
 from .calibration import (
-    load_calibration_cache, save_calibration_cache,
+    load_calibration_cache,
+    save_calibration_cache,
     CalibrationPackage,
 )
 from .shutter_handler import ShutterHandler
@@ -37,6 +38,7 @@ class CameraThread(QThread):
     status_message = pyqtSignal(str)
     camera_ready = pyqtSignal()
     init_failed = pyqtSignal(str)
+
     def __init__(self, config: DaemonConfig, parent: QThread | None = None) -> None:
         super().__init__(parent)
         self.camera = UTi120Camera()
@@ -67,15 +69,17 @@ class CameraThread(QThread):
         self.processor.set_calibration(cal_points)
 
         # Factory calibration packages (serial-aware cache)
-        serial = info.get('serial', '')
+        serial = info.get("serial", "")
         logger.info("Device serial: %s", serial)
         calib_pkgs = load_calibration_cache(serial)
         if calib_pkgs:
             logger.info("Calibration cache valid for serial %s", serial)
             self.status_message.emit("Loaded calibration from cache")
         else:
-            logger.info("Calibration cache miss — downloading from device "
-                        "(serial=%s)", serial)
+            logger.info(
+                "Calibration cache miss — downloading from device " "(serial=%s)",
+                serial,
+            )
             calib_pkgs = {}
             raw_data: dict[int, bytes] = {}
             for range_id, label in [(0, "low-temp"), (1, "high-temp")]:
@@ -86,11 +90,9 @@ class CameraThread(QThread):
                         raw_data[range_id] = pkg_data
                         self.status_message.emit(f"Downloaded {label} calibration")
                     except (struct.error, ValueError, AssertionError) as e:
-                        self.status_message.emit(
-                            f"WARNING: {label} parse failed: {e}")
+                        self.status_message.emit(f"WARNING: {label} parse failed: {e}")
             if raw_data:
-                save_calibration_cache(
-                    serial, raw_data.get(0), raw_data.get(1))
+                save_calibration_cache(serial, raw_data.get(0), raw_data.get(1))
 
         low_pkg = calib_pkgs.get(0)
         high_pkg = calib_pkgs.get(1)
@@ -179,16 +181,22 @@ class CameraThread(QThread):
             logger.debug(f"processing took {time.time() - start_time} s")
 
             # Auto-recalibration
-            action = self.shutter_handler.check(self.processor.fpa_temp, self.processor.frame_counter)
-            if action == 'nuc':
-                self.status_message.emit(f"Auto-NUC (FPA={self.processor.fpa_temp:.2f}°C)")
+            action = self.shutter_handler.check(
+                self.processor.fpa_temp, self.processor.frame_counter
+            )
+            if action == "nuc":
+                self.status_message.emit(
+                    f"Auto-NUC (FPA={self.processor.fpa_temp:.2f}°C)"
+                )
                 self.camera.trigger_shutter()
                 time.sleep(0.5)
                 self._do_shutter_calibration()
                 self.shutter_handler.did_nuc(self.processor.fpa_temp)
                 continue
-            elif action == 'shutter':
-                self.status_message.emit(f"Auto-shutter (FPA={self.processor.fpa_temp:.2f}°C)")
+            elif action == "shutter":
+                self.status_message.emit(
+                    f"Auto-shutter (FPA={self.processor.fpa_temp:.2f}°C)"
+                )
                 self._do_shutter_calibration()
                 self.shutter_handler.did_shutter(self.processor.fpa_temp)
                 continue
@@ -200,7 +208,8 @@ class CameraThread(QThread):
                 self.status_message.emit(f"Switching to {label} range...")
                 pkg = self.processor.switch_range(new_range)
                 self.camera.set_measure_range(
-                    pkg.sensor_gain, pkg.sensor_int, pkg.sensor_res)
+                    pkg.sensor_gain, pkg.sensor_int, pkg.sensor_res
+                )
                 time.sleep(0.3)
                 self._do_shutter_calibration()
                 self.status_message.emit("Streaming")
@@ -209,7 +218,6 @@ class CameraThread(QThread):
             start_time = time.time()
             upscaled = self.processor.upscale(colored, DISPLAY_WIDTH, DISPLAY_HEIGHT)
             logger.debug(f"upscaling took {time.time() - start_time} s")
-
 
             self.frame_ready.emit(upscaled, self.processor)
 

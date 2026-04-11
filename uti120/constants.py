@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 # Camera VID:PID
 USB_VID = 0x5656
 USB_PID = 0x1201
@@ -51,7 +48,7 @@ SENSOR_MEASURE_RANGE = 0x09
 CMD_REQUEST_FRAME = bytes([0x81])
 
 # Display
-DISPLAY_WIDTH = FRAME_WIDTH * 6   # 720
+DISPLAY_WIDTH = FRAME_WIDTH * 6  # 720
 DISPLAY_HEIGHT = FRAME_HEIGHT * 6  # 540
 
 # Transfer protocol (calibration package download)
@@ -69,25 +66,25 @@ REG_PKG_LENGTH_HIGH = 0x0C
 REG_PKG_LENGTH_LOW = 0x0D
 
 # Application defaults
-DEFAULT_PALETTE_IDX = 5           # Inferno
+DEFAULT_PALETTE_IDX = 5  # Inferno
 DEFAULT_EMISSIVITY = 0.95
-DEFAULT_CONTRAST = 128            # unity multiplier (range 64-255)
-DEFAULT_AMBIENT_TEMP = 22.0       # reflected / ambient temperature (°C)
+DEFAULT_CONTRAST = 128  # unity multiplier (range 64-255)
+DEFAULT_AMBIENT_TEMP = 22.0  # reflected / ambient temperature (°C)
 
 # Processing parameters
-FPA_SMOOTH_WINDOW = 15            # median-filter buffer for FPA temperature
-DEFAULT_TFF_STD = 5               # temporal noise filter sigma
-TEMP_MARGIN = 2                   # edge pixels excluded from min/max stats
-RANGE_SWITCH_UP_C = 150.0         # switch to high range above this °C
-RANGE_SWITCH_DOWN_C = 120.0       # switch back to low range below this °C
-RANGE_SWITCH_COOLDOWN_S = 5.0     # seconds between range switches
+FPA_SMOOTH_WINDOW = 15  # median-filter buffer for FPA temperature
+DEFAULT_TFF_STD = 5  # temporal noise filter sigma
+TEMP_MARGIN = 2  # edge pixels excluded from min/max stats
+RANGE_SWITCH_UP_C = 150.0  # switch to high range above this °C
+RANGE_SWITCH_DOWN_C = 120.0  # switch back to low range below this °C
+RANGE_SWITCH_COOLDOWN_S = 5.0  # seconds between range switches
 
 # UI intervals
-STATS_UPDATE_INTERVAL_MS = 250    # temperature label refresh
-GRAPH_SAMPLE_INTERVAL_MS = 500    # graph data sampling rate
+STATS_UPDATE_INTERVAL_MS = 250  # temperature label refresh
+GRAPH_SAMPLE_INTERVAL_MS = 500  # graph data sampling rate
 
-VIDEO_FPS = 25                    # recording framerate
-RECONNECT_FAIL_THRESHOLD = 20     # consecutive failed frames before reconnect
+VIDEO_FPS = 25  # recording framerate
+RECONNECT_FAIL_THRESHOLD = 20  # consecutive failed frames before reconnect
 
 # Emissivity presets — (display_name, emissivity_value)
 # First entry must be "Custom" with None (used when slider is manually adjusted).
@@ -116,8 +113,7 @@ EMISSIVITY_PRESETS = [
 ]
 
 UPSCALING_METHODS = [
-    "trivial", # blocky
+    "trivial",  # blocky
     "simple",  # interpolate and sharpen
-    "cnn"      # magic
+    "cnn",  # magic
 ]
-
