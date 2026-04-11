@@ -1,25 +1,15 @@
 """Headless camera daemon"""
 
-import sys
-import time
-import datetime
 import logging
 import subprocess
+import os.path
 from typing import TYPE_CHECKING, Optional, Tuple
 
 import cv2
 import numpy as np
 
-from PyQt6.QtCore import Qt, pyqtSlot, QTimer, QObject
-from PyQt6.QtGui import (
-    QFont,
-    QShortcut,
-    QKeySequence,
-    QPainter, QColor,
-    QCloseEvent,
-    QImage,
-    QPen
-)
+from PyQt6.QtCore import pyqtSlot, QObject
+
 
 from .processor import FrameProcessor
 from .camera_thread import CameraThread
@@ -55,13 +45,16 @@ class Daemon(QObject):
     def start(self) -> None:
         assert self.ffmpeg_process == None and not self.cam_thread.isRunning()
 
+        if not os.path.exists(self.config.dev_video_file):
+            logger.error(f"Webcam file {self.config.dev_video_file} does not exist. You need to set up v4l2loopback and point this daemon at the newly created /dev/videoX")
+            raise FileNotFoundError("Webcam file does not exist")
+
         # one-time setup of ffmpeg
         # I am deliberately not using PyAV, there are enough dependencies in the world already
         # plus, plain old `ffmpeg -do-stuff` does the job just fine
         #
-        # TODO: command line / config file settings
         self.ffmpeg_process = subprocess.Popen((f"ffmpeg -y -f rawvideo -vcodec rawvideo -pix_fmt bgr24 -s {DISPLAY_WIDTH}x{DISPLAY_HEIGHT} " +
-                                               "-r 25 -i - -vf format=yuv420p -f v4l2 /dev/video4 ").split(),
+                                               f"-r 25 -i - -vf format=yuv420p -f v4l2 {self.config.dev_video_file}").split(),
             stderr=subprocess.STDOUT,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE)
