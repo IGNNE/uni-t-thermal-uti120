@@ -18,7 +18,7 @@ from .config import DaemonConfig
 logger = logging.getLogger(__name__)
 
 
-class Daemon():
+class Daemon:
 
     def __init__(
         self,
