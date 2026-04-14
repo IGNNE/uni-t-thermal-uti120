@@ -1,0 +1,5 @@
+[flake8]
+# E203: ignore whitespace before ':' (used in array access)
+extend-ignore = E203
+# come on, we don't have 80 char terminals any more (and if you do, pls upgrade, HD is awesome) 
+max-line-length = 100

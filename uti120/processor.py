@@ -5,33 +5,51 @@ from __future__ import annotations
 import logging
 import math
 import time
+import os
 from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
 import cv2
+import cv2.dnn_superres
 from scipy.ndimage import median_filter
 
 from .constants import (
-    FRAME_SIZE, FRAME_WIDTH, FRAME_HEIGHT, FRAME_PIXELS, PIXEL_OFFSET,
-    HDR_FRAME_COUNTER, HDR_SHUTTER_TEMP_RT, HDR_LENS_TEMP, HDR_FP_TEMP, HDR_SHUTTER_TEMP_START,
-    DEFAULT_PALETTE_IDX, DEFAULT_EMISSIVITY, DEFAULT_CONTRAST,
-    DEFAULT_AMBIENT_TEMP, FPA_SMOOTH_WINDOW, DEFAULT_TFF_STD,
-    TEMP_MARGIN, RANGE_SWITCH_UP_C, RANGE_SWITCH_DOWN_C,
+    FRAME_SIZE,
+    FRAME_WIDTH,
+    FRAME_HEIGHT,
+    FRAME_PIXELS,
+    PIXEL_OFFSET,
+    HDR_FRAME_COUNTER,
+    HDR_SHUTTER_TEMP_RT,
+    HDR_LENS_TEMP,
+    HDR_FP_TEMP,
+    HDR_SHUTTER_TEMP_START,
+    DEFAULT_CONTRAST,
+    DEFAULT_AMBIENT_TEMP,
+    FPA_SMOOTH_WINDOW,
+    DEFAULT_TFF_STD,
+    TEMP_MARGIN,
+    RANGE_SWITCH_UP_C,
+    RANGE_SWITCH_DOWN_C,
     RANGE_SWITCH_COOLDOWN_S,
+    UPSCALING_METHODS,
+    CNN_MODEL,
+    EMISSIVITY_PRESETS,
 )
 from .palettes import apply_palette
 from .calibration import (
-    get_curve_segments, y16_to_temperature_array,
-    y16_to_temperature_interpolated, lens_drift_correct_zx01c,
+    get_curve_segments,
+    y16_to_temperature_array,
+    y16_to_temperature_interpolated,
+    lens_drift_correct_zx01c,
     emiss_correct,
 )
+from .config import DaemonConfig
 
 if TYPE_CHECKING:
     from .calibration import CalibrationPackage
-
-__all__ = ["FrameProcessor"]
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +57,12 @@ logger = logging.getLogger(__name__)
 class FrameProcessor:
     """Process raw frame data into thermal images."""
 
-    def __init__(self) -> None:
-        self.palette_idx = DEFAULT_PALETTE_IDX
+    def __init__(self, config: DaemonConfig) -> None:
+        self.palette = config.palette
         self._last_normalized = None
-        self.flip = False
-        self.rotation = 0  # 0, 90, 180, 270 degrees clockwise
+        self.flip = config.flip
+        self.rotation = config.rotate_deg  # 0, 90, 180, 270 degrees clockwise
+        self.upscaling_method = config.upscaling_method  # trivial, simple, cnn
         self.min_temp = 0.0
         self.max_temp = 0.0
         self.center_temp = 0.0
@@ -54,16 +73,22 @@ class FrameProcessor:
         self.brightness = 0
         self.contrast = DEFAULT_CONTRAST
 
-        self.auto_range = True          # True = auto-scale, False = locked
-        self._locked_vmin = None        # locked Y16 percentile min
-        self._locked_vmax = None        # locked Y16 percentile max
-        self.emissivity = DEFAULT_EMISSIVITY
+        self.auto_range = True  # True = auto-scale, False = locked
+        self._locked_vmin = None  # locked Y16 percentile min
+        self._locked_vmax = None  # locked Y16 percentile max
+        self.emissivity = (
+            config.emissivity_custom
+            if config.emissivity_custom > 0
+            else EMISSIVITY_PRESETS[config.emissivity]
+        )
         self.ambient_temp = DEFAULT_AMBIENT_TEMP
-        self.distance = 1.0  # object distance in metres (correction disabled: MP[0xa4]=0)
+        self.distance = (
+            1.0  # object distance in metres (correction disabled: MP[0xa4]=0)
+        )
         # Mouse cursor temperature
         self.mouse_temp = None  # None when cursor is outside window
         self.mouse_pos = None  # display pixel coords, None until mouse enters
-        self._temp_map = None   # last computed temperature map (90x120)
+        self._temp_map = None  # last computed temperature map (90x120)
         # Header info from last frame
         self.frame_counter = 0
         self.shutter_temp = 0.0
@@ -78,11 +103,11 @@ class FrameProcessor:
         self._calib_pkg = None
         self._dark_frame = None
         self._dark_shutter_temp = 25.0  # shutter RT temp when dark was captured
-        self._dark_lens_temp = 0.0      # lens temp when dark was captured
-        self._dark_fpa_temp = 0.0       # FPA temp when dark was captured
+        self._dark_lens_temp = 0.0  # lens temp when dark was captured
+        self._dark_fpa_temp = 0.0  # FPA temp when dark was captured
         self._curve_buf = None
         self._curve_segments = None  # all 4 curve segments for interpolation
-        self._fpa_weight = 1.0       # FPA interpolation weight
+        self._fpa_weight = 1.0  # FPA interpolation weight
         self._curve_steps = 0
         self._core_body_temp = 0.0
         self._nuc_gain = None  # per-pixel NUC gain from Section 2 K-buffer
@@ -103,14 +128,18 @@ class FrameProcessor:
         self._tff_prev = None
         self._tff_weights = None
         self._build_tff_weights()
+        # super-resolution filter
+        self.sr_impl = None
 
     def _load_flatfield(self) -> None:
         """Load flat-field FPN correction map if available."""
-        fpn_path = Path(__file__).resolve().parent.parent / 'flatfield_fpn.npy'
+        fpn_path = Path(__file__).resolve().parent.parent / "flatfield_fpn.npy"
         if fpn_path.exists():
             self.fpn_map = np.load(str(fpn_path)).astype(np.float32)
             if self.fpn_map.shape == (FRAME_HEIGHT, FRAME_WIDTH):
-                logger.info("  Loaded flat-field correction (FPN std=%.1f)", self.fpn_map.std())
+                logger.info(
+                    "  Loaded flat-field correction (FPN std=%.1f)", self.fpn_map.std()
+                )
             else:
                 logger.warning("  flatfield_fpn.npy shape mismatch, ignoring")
                 self.fpn_map = None
@@ -195,7 +224,9 @@ class FrameProcessor:
         # Initial curve selection (will be updated per-frame based on FPA temp)
         self._select_curve(self.fpa_temp_raw)
 
-    def set_calibration_packages(self, low_pkg: CalibrationPackage | None, high_pkg: CalibrationPackage | None) -> None:
+    def set_calibration_packages(
+        self, low_pkg: CalibrationPackage | None, high_pkg: CalibrationPackage | None
+    ) -> None:
         """Store both calibration packages for range switching.
 
         Args:
@@ -247,8 +278,13 @@ class FrameProcessor:
     def active_range(self) -> int:
         return self._active_range
 
-    def set_dark_frame(self, dark_frame: np.ndarray | None, shutter_temp: float | None = None,
-                       lens_temp: float | None = None, fpa_temp: float | None = None) -> None:
+    def set_dark_frame(
+        self,
+        dark_frame: np.ndarray | None,
+        shutter_temp: float | None = None,
+        lens_temp: float | None = None,
+        fpa_temp: float | None = None,
+    ) -> None:
         """Set dark frame reference for NUC correction.
 
         Args:
@@ -270,8 +306,11 @@ class FrameProcessor:
             self._fpa_temps.clear()
             # Reset TFF buffer: NUC offset changed, prev frame no longer valid
             self._tff_prev = None
-            logger.info("  Dark frame set: mean=%.0f, std=%.0f", dark_frame.mean(), dark_frame.std())
-
+            logger.info(
+                "  Dark frame set: mean=%.0f, std=%.0f",
+                dark_frame.mean(),
+                dark_frame.std(),
+            )
 
     def _replace_bad_pixels(self, y16_frame: np.ndarray) -> np.ndarray:
         """Replace bad pixels with 3x3 median of valid neighbors.
@@ -298,8 +337,7 @@ class FrameProcessor:
         """Select curve segments and pixel offset based on FPA temperature."""
         if self._calib_pkg is None:
             return
-        segments, vi, fpa_weight = get_curve_segments(
-            self._calib_pkg, fpa_temp_raw)
+        segments, vi, fpa_weight = get_curve_segments(self._calib_pkg, fpa_temp_raw)
         self._curve_buf = segments[0]  # kept for has_calibration check
         self._curve_segments = segments
         self._fpa_weight = fpa_weight
@@ -308,9 +346,11 @@ class FrameProcessor:
     @property
     def has_calibration(self) -> bool:
         """True if factory calibration + dark frame are available."""
-        return (self._calib_pkg is not None and
-                self._dark_frame is not None and
-                self._curve_buf is not None)
+        return (
+            self._calib_pkg is not None
+            and self._dark_frame is not None
+            and self._curve_buf is not None
+        )
 
     def parse_frame(self, raw_data: bytes | None) -> np.ndarray | None:
         """Parse raw frame into pixel array and header info.
@@ -323,7 +363,7 @@ class FrameProcessor:
         if raw_data is None or len(raw_data) < FRAME_SIZE:
             return None
 
-        shorts = np.frombuffer(raw_data, dtype='<u2')
+        shorts = np.frombuffer(raw_data, dtype="<u2")
 
         # Frame alignment check: trailing padding should be mostly zeros.
         # If we started reading mid-frame, pixel data spills into the
@@ -352,7 +392,7 @@ class FrameProcessor:
                 self._select_curve(smoothed_fpa)
 
         # Extract pixel data
-        pixels = shorts[PIXEL_OFFSET:PIXEL_OFFSET + FRAME_PIXELS]
+        pixels = shorts[PIXEL_OFFSET : PIXEL_OFFSET + FRAME_PIXELS]
         if len(pixels) < FRAME_PIXELS:
             return None
 
@@ -368,7 +408,8 @@ class FrameProcessor:
         """
         # LensDriftCorrectZX01C: lens temperature drift correction
         l_drift = lens_drift_correct_zx01c(
-            self.lens_temp, self._dark_lens_temp, self._dark_fpa_temp)
+            self.lens_temp, self._dark_lens_temp, self._dark_fpa_temp
+        )
 
         # Use current frame's realtime shutter temp for bias calculation,
         # matching native updateMeasureParam: MP[0x1c] = realtimeShutterTemp/100
@@ -377,24 +418,36 @@ class FrameProcessor:
         # Multi-curve FPA-weighted interpolation (Ghidra-confirmed)
         if self._curve_segments is not None:
             temps = y16_to_temperature_interpolated(
-                nuc_y16, self._curve_segments, self._fpa_weight,
-                self._curve_steps, self._core_body_temp,
+                nuc_y16,
+                self._curve_segments,
+                self._fpa_weight,
+                self._curve_steps,
+                self._core_body_temp,
                 shutter_temp=shutter_t,
                 lens_drift=l_drift,
                 distance=self.distance,
-                focus_distance_params=self._calib_pkg.focus_distance_params)
+                focus_distance_params=self._calib_pkg.focus_distance_params,
+            )
         else:
             temps = y16_to_temperature_array(
-                nuc_y16, self._curve_buf, self._curve_steps,
-                self._core_body_temp, shutter_temp=shutter_t,
-                lens_drift=l_drift)
+                nuc_y16,
+                self._curve_buf,
+                self._curve_steps,
+                self._core_body_temp,
+                shutter_temp=shutter_t,
+                lens_drift=l_drift,
+            )
 
         # Emissivity correction (Ghidra EmissCor: skip when e >= 0.98)
         if self.emissivity < 0.98 and self._curve_buf is not None:
             temps = emiss_correct(
-                temps, self.ambient_temp, self.emissivity,
-                self._curve_buf, self._curve_steps,
-                self._core_body_temp)
+                temps,
+                self.ambient_temp,
+                self.emissivity,
+                self._curve_buf,
+                self._curve_steps,
+                self._core_body_temp,
+            )
         return temps
 
     def _apply_nuc(self, y16_raw: np.ndarray) -> np.ndarray:
@@ -472,7 +525,9 @@ class FrameProcessor:
             vmax = self._locked_vmax
 
         if vmax > vmin:
-            normalized = np.clip((y16_display - vmin) / (vmax - vmin) * 255, 0, 255).astype(np.uint8)
+            normalized = np.clip(
+                (y16_display - vmin) / (vmax - vmin) * 255, 0, 255
+            ).astype(np.uint8)
         else:
             normalized = np.full_like(y16_display, 128, dtype=np.uint8)
 
@@ -484,7 +539,7 @@ class FrameProcessor:
             normalized = np.clip(img, 0, 255).astype(np.uint8)
 
         if self.flip:
-            normalized = cv2.flip(normalized, 1)   # horizontal mirror
+            normalized = cv2.flip(normalized, 1)  # horizontal mirror
         if self.rotation == 90:
             normalized = cv2.rotate(normalized, cv2.ROTATE_90_CLOCKWISE)
         elif self.rotation == 180:
@@ -493,7 +548,47 @@ class FrameProcessor:
             normalized = cv2.rotate(normalized, cv2.ROTATE_90_COUNTERCLOCKWISE)
 
         self._last_normalized = normalized
-        return apply_palette(normalized, self.palette_idx)
+        return apply_palette(normalized, self.palette)
+
+    def upscale(self, input: np.ndarray, w: int, h: int) -> np.ndarray:
+        if self.upscaling_method == UPSCALING_METHODS[0]:  # trivial
+            return self._upscale_trivial(input, w, h)
+        elif self.upscaling_method == UPSCALING_METHODS[1]:  # simple
+            return self._upscale_simple(input, w, h)
+        elif self.upscaling_method == UPSCALING_METHODS[2]:  # cnn
+            return self._upscale_cnn(input, w, h)
+        else:
+            raise ValueError(f"Upscaling method {self.upscaling_method} not known")
+
+    def _upscale_trivial(self, lowres: np.ndarray, w: int, h: int) -> np.ndarray:
+        """original trivial, blocky upscaling"""
+        return cv2.resize(lowres, (w, h), interpolation=cv2.INTER_NEAREST)
+
+    def _upscale_simple(self, lowres: np.ndarray, w: int, h: int) -> np.ndarray:
+        """some prettier upscaling and sharpening"""
+        highres = cv2.resize(lowres, (w, h), interpolation=cv2.INTER_LANCZOS4)
+        kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
+        sharpened = cv2.filter2D(highres, -1, kernel)
+        return sharpened
+
+    def _upscale_cnn(self, lowres: np.ndarray, w: int, h: int) -> np.ndarray:
+        """CNN super-resolution black magic"""
+        if self.sr_impl is None:
+            self.sr_impl = cv2.dnn_superres.DnnSuperResImpl_create()
+            if not os.path.exists(CNN_MODEL["file"]):
+                logger.error(
+                    f"CNN model file {CNN_MODEL["file"]} not found, make sure it exists"
+                )
+                raise FileNotFoundError("Model file not found")
+            self.sr_impl.readModel(CNN_MODEL["file"])
+            self.sr_impl.setModel(CNN_MODEL["name"], CNN_MODEL["factor"])
+            # TODO: we never actually check this...
+            logger.info("Read espcn model")
+
+        upsampled = self.sr_impl.upsample(lowres)
+        # print(f"upsampled dims {lowres.shape}=>{upsampled.shape} output {w}x{h}")
+        # interpolate and sharpen for good measure
+        return self._upscale_simple(upsampled, w, h)
 
     def unlock_range(self) -> None:
         """Unlock color scale to resume auto-scaling."""
@@ -511,7 +606,9 @@ class FrameProcessor:
         """Height of displayed frame after rotation."""
         return FRAME_WIDTH if self.rotation in (90, 270) else FRAME_HEIGHT
 
-    def update_mouse_temp(self, display_x: int, display_y: int, display_w: int, display_h: int) -> None:
+    def update_mouse_temp(
+        self, display_x: int, display_y: int, display_w: int, display_h: int
+    ) -> None:
         """Update mouse temperature from display pixel coordinates."""
         if self._temp_map is None:
             self.mouse_temp = None
@@ -541,7 +638,9 @@ class FrameProcessor:
             self.mouse_temp = None
             self.mouse_pos = None
 
-    def get_region_temps(self, fx1: int, fy1: int, fx2: int, fy2: int) -> np.ndarray | None:
+    def get_region_temps(
+        self, fx1: int, fy1: int, fx2: int, fy2: int
+    ) -> np.ndarray | None:
         """Return temp_map slice for the given frame-coordinate rectangle."""
         if self._temp_map is None:
             return None

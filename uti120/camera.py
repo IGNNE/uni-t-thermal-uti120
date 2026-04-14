@@ -16,21 +16,40 @@ try:
 except ImportError as exc:
     raise ImportError("pyusb not installed. Run: pip install pyusb") from exc
 
-__all__ = ["UTi120Camera"]
+from .constants import (
+    USB_VID,
+    USB_PID,
+    FRAME_SIZE,
+    BULK_CHUNK_SIZE,
+    BULK_TIMEOUT_MS,
+    BULK_MAX_ITERS,
+    FUNC_WRITE_REG,
+    FUNC_READ_REG,
+    FUNC_SENSOR_CMD,
+    REG_RUN_STATUS,
+    STATUS_IDLE,
+    STATUS_IMAGE_UPLOAD,
+    SENSOR_SHUTTER,
+    SENSOR_NUC,
+    SENSOR_MEASURE_RANGE,
+    CMD_REQUEST_FRAME,
+    FRAME_WIDTH,
+    FRAME_HEIGHT,
+    FRAME_PIXELS,
+    PIXEL_OFFSET,
+    FUNC_TRANSFER,
+    STATUS_PARAM_UPLOAD,
+    TRANSFER_BEGIN,
+    TRANSFER_CRC,
+    TRANSFER_END,
+    CALIB_CHUNK_SIZE,
+    CALIB_HIGH_FLASH_ADDR,
+    CALIB_LOW_FLASH_ADDR,
+    REG_PKG_LENGTH_HIGH,
+    REG_PKG_LENGTH_LOW,
+)
 
 logger = logging.getLogger(__name__)
-
-from .constants import (
-    USB_VID, USB_PID, FRAME_SIZE, BULK_CHUNK_SIZE, BULK_TIMEOUT_MS,
-    BULK_MAX_ITERS, FUNC_WRITE_REG, FUNC_READ_REG, FUNC_SENSOR_CMD,
-    REG_RUN_STATUS, STATUS_IDLE, STATUS_IMAGE_UPLOAD,
-    SENSOR_SHUTTER, SENSOR_NUC, SENSOR_MEASURE_RANGE, CMD_REQUEST_FRAME,
-    FRAME_WIDTH, FRAME_HEIGHT, FRAME_PIXELS, PIXEL_OFFSET,
-    FUNC_TRANSFER, STATUS_PARAM_UPLOAD,
-    TRANSFER_BEGIN, TRANSFER_CRC, TRANSFER_END, CALIB_CHUNK_SIZE,
-    CALIB_HIGH_FLASH_ADDR, CALIB_LOW_FLASH_ADDR,
-    REG_PKG_LENGTH_HIGH, REG_PKG_LENGTH_LOW,
-)
 
 
 class UTi120Camera:
@@ -67,7 +86,9 @@ class UTi120Camera:
             logger.warning("No UTi120 camera found. Connected USB devices:")
             for dev in usb.core.find(find_all=True):
                 try:
-                    product = usb.util.get_string(dev, dev.iProduct) if dev.iProduct else "?"
+                    product = (
+                        usb.util.get_string(dev, dev.iProduct) if dev.iProduct else "?"
+                    )
                 except (usb.core.USBError, ValueError):
                     product = "?"
                 logger.warning("  %04x:%04x - %s", dev.idVendor, dev.idProduct, product)
@@ -108,7 +129,10 @@ class UTi120Camera:
 
             # Interface 0: Bulk transfer (frame data)
             for ep in cfg[(0, 0)]:
-                if usb.util.endpoint_direction(ep.bEndpointAddress) == usb.util.ENDPOINT_IN:
+                if (
+                    usb.util.endpoint_direction(ep.bEndpointAddress)
+                    == usb.util.ENDPOINT_IN
+                ):
                     self.bulk_in = ep
 
             # Interface 1: Interrupt (commands)
@@ -122,7 +146,11 @@ class UTi120Camera:
             usb.util.claim_interface(self.dev, 0)
             usb.util.claim_interface(self.dev, 1)
 
-            logger.debug("Bulk IN:  EP 0x%02x (max %d)", self.bulk_in.bEndpointAddress, self.bulk_in.wMaxPacketSize)
+            logger.debug(
+                "Bulk IN:  EP 0x%02x (max %d)",
+                self.bulk_in.bEndpointAddress,
+                self.bulk_in.wMaxPacketSize,
+            )
             logger.debug("Int OUT:  EP 0x%02x", self.int_out.bEndpointAddress)
             logger.debug("Int IN:   EP 0x%02x", self.int_in.bEndpointAddress)
             return True
@@ -193,7 +221,9 @@ class UTi120Camera:
         logger.error("Failed to reconnect after all attempts.")
         return False
 
-    def _send_interrupt(self, data: bytes, response_size: int = 0, timeout: int = 500) -> bytes | None:
+    def _send_interrupt(
+        self, data: bytes, response_size: int = 0, timeout: int = 500
+    ) -> bytes | None:
         """Send data via interrupt OUT and optionally read response."""
         with self._lock:
             self.int_out.write(data, timeout=50)
@@ -232,8 +262,17 @@ class UTi120Camera:
         Matches APK: sendSwitchTempLevelCmd(tempLevel) which sends
         [FUNC_SENSOR_CMD, 0x09, 0x01, 0, res, int, gain].
         """
-        cmd = bytes([FUNC_SENSOR_CMD, SENSOR_MEASURE_RANGE, 0x01,
-                     0, resolution, integration, gain])
+        cmd = bytes(
+            [
+                FUNC_SENSOR_CMD,
+                SENSOR_MEASURE_RANGE,
+                0x01,
+                0,
+                resolution,
+                integration,
+                gain,
+            ]
+        )
         self._send_interrupt(cmd, response_size=64)
 
     def trigger_shutter(self) -> None:
@@ -250,7 +289,9 @@ class UTi120Camera:
         self.set_run_status(STATUS_IMAGE_UPLOAD)
         time.sleep(0.2)
 
-    def trigger_shutter_with_dark_capture(self, n_frames: int = 5) -> tuple[np.ndarray | None, float | None, float | None, float | None]:
+    def trigger_shutter_with_dark_capture(
+        self, n_frames: int = 5
+    ) -> tuple[np.ndarray | None, float | None, float | None, float | None]:
         """Shutter calibration with dark frame capture.
 
         Captures frames while the shutter is closed to build a dark frame
@@ -269,14 +310,14 @@ class UTi120Camera:
         # Read several live frames to get stable header temperatures
         # (single frames can be garbled during transitions)
         from .constants import HDR_SHUTTER_TEMP_RT, HDR_FP_TEMP, HDR_LENS_TEMP
+
         shutter_temp = None
         lens_temp = None
         fpa_temp = None
-        fpa_temp_raw = 0
         for _ in range(10):
             raw = self.request_frame()
             if raw and len(raw) == FRAME_SIZE:
-                shorts = np.frombuffer(raw, dtype='<u2')
+                shorts = np.frombuffer(raw, dtype="<u2")
                 st = shorts[HDR_SHUTTER_TEMP_RT]
                 lt = shorts[HDR_LENS_TEMP]
                 fp = shorts[HDR_FP_TEMP]
@@ -285,12 +326,15 @@ class UTi120Camera:
                     shutter_temp = st / 100.0
                     lens_temp = lt / 100.0
                     fpa_temp = fp / 100.0
-                    fpa_temp_raw = int(fp)
             time.sleep(0.02)
 
         if shutter_temp:
-            logger.info("  Pre-capture temps: shutter=%.1f°C lens=%.1f°C fpa=%.1f°C",
-                        shutter_temp, lens_temp, fpa_temp)
+            logger.info(
+                "  Pre-capture temps: shutter=%.1f°C lens=%.1f°C fpa=%.1f°C",
+                shutter_temp,
+                lens_temp,
+                fpa_temp,
+            )
 
         self.set_run_status(STATUS_IDLE)
         time.sleep(0.1)
@@ -316,11 +360,12 @@ class UTi120Camera:
         for _ in range(n_frames * 3):  # Try up to 3x to get enough frames
             raw = self.request_frame()
             if raw and len(raw) == FRAME_SIZE:
-                shorts = np.frombuffer(raw, dtype='<u2')
-                pixels = shorts[PIXEL_OFFSET:PIXEL_OFFSET + FRAME_PIXELS]
+                shorts = np.frombuffer(raw, dtype="<u2")
+                pixels = shorts[PIXEL_OFFSET : PIXEL_OFFSET + FRAME_PIXELS]
                 if len(pixels) == FRAME_PIXELS:
                     dark_frames.append(
-                        pixels.reshape(FRAME_HEIGHT, FRAME_WIDTH).astype(np.float32))
+                        pixels.reshape(FRAME_HEIGHT, FRAME_WIDTH).astype(np.float32)
+                    )
             if len(dark_frames) >= n_frames:
                 break
             time.sleep(0.02)
@@ -329,8 +374,12 @@ class UTi120Camera:
         dark_frame = None
         if dark_frames:
             dark_frame = np.mean(dark_frames, axis=0)
-            logger.info("  Dark frame: %d frames, mean=%.0f, std=%.0f",
-                        len(dark_frames), dark_frame.mean(), dark_frame.std())
+            logger.info(
+                "  Dark frame: %d frames, mean=%.0f, std=%.0f",
+                len(dark_frames),
+                dark_frame.mean(),
+                dark_frame.std(),
+            )
             if shutter_temp is not None:
                 logger.info("  Shutter temp at capture: %.1f°C", shutter_temp)
 
@@ -359,13 +408,13 @@ class UTi120Camera:
                 chunk = self.dev.read(
                     self.bulk_in.bEndpointAddress,
                     BULK_CHUNK_SIZE,
-                    timeout=BULK_TIMEOUT_MS
+                    timeout=BULK_TIMEOUT_MS,
                 )
                 if chunk:
                     n = len(chunk)
                     copy_len = min(n, FRAME_SIZE - total)
                     if copy_len > 0:
-                        frame_buf[total:total + copy_len] = chunk[:copy_len]
+                        frame_buf[total : total + copy_len] = chunk[:copy_len]
                         total += copy_len
             except usb.core.USBTimeoutError:
                 if it == 0:
@@ -385,10 +434,11 @@ class UTi120Camera:
         """Read a single 4-byte register as a signed big-endian int."""
         resp = self._send_interrupt(
             bytes([FUNC_READ_REG, offset, 0x01]),
-            response_size=6, timeout=1000,
+            response_size=6,
+            timeout=1000,
         )
         if resp and len(resp) >= 6:
-            return struct.unpack('>i', bytes(resp[2:6]))[0]
+            return struct.unpack(">i", bytes(resp[2:6]))[0]
         return None
 
     VENDOR_NAMES = {0: "UNI-T", 1: "KT"}
@@ -399,43 +449,37 @@ class UTi120Camera:
         info = {}
 
         # Vendor / Factory ID (register 0x00)
-        resp = self._send_interrupt(
-            bytes([FUNC_READ_REG, 0x00, 1]),
-            response_size=6
-        )
+        resp = self._send_interrupt(bytes([FUNC_READ_REG, 0x00, 1]), response_size=6)
         if resp and len(resp) >= 6:
-            vid = struct.unpack('>I', bytes(resp[2:6]))[0]
-            info['vendor'] = self.VENDOR_NAMES.get(vid, f"unknown({vid})")
+            vid = struct.unpack(">I", bytes(resp[2:6]))[0]
+            info["vendor"] = self.VENDOR_NAMES.get(vid, f"unknown({vid})")
 
         # Product ID (register 0x01)
-        resp = self._send_interrupt(
-            bytes([FUNC_READ_REG, 0x01, 1]),
-            response_size=6
-        )
+        resp = self._send_interrupt(bytes([FUNC_READ_REG, 0x01, 1]), response_size=6)
         if resp and len(resp) >= 6:
-            pid = struct.unpack('>I', bytes(resp[2:6]))[0]
-            info['model'] = self.PRODUCT_NAMES.get(pid, f"unknown({pid})")
+            pid = struct.unpack(">I", bytes(resp[2:6]))[0]
+            info["model"] = self.PRODUCT_NAMES.get(pid, f"unknown({pid})")
 
         # HW / SW versions (registers 0x02, 0x03)
-        for name, offset in [('hw_version', 0x02), ('sw_version', 0x03)]:
+        for name, offset in [("hw_version", 0x02), ("sw_version", 0x03)]:
             resp = self._send_interrupt(
-                bytes([FUNC_READ_REG, offset, 1]),
-                response_size=6
+                bytes([FUNC_READ_REG, offset, 1]), response_size=6
             )
             if resp and len(resp) >= 6:
-                ver = struct.unpack('>I', bytes(resp[2:6]))[0]
+                ver = struct.unpack(">I", bytes(resp[2:6]))[0]
                 info[name] = f"{(ver >> 16) & 0xFF}.{(ver >> 8) & 0xFF}.{ver & 0xFF}"
 
         # Serial number (register 0x07, 5 words)
         resp = self._send_interrupt(
-            bytes([FUNC_READ_REG, 0x07, 0x05]),
-            response_size=22
+            bytes([FUNC_READ_REG, 0x07, 0x05]), response_size=22
         )
         if resp and len(resp) > 2:
             try:
-                info['serial'] = bytes(resp[2:]).decode('utf-8', errors='ignore').strip('\x00')
+                info["serial"] = (
+                    bytes(resp[2:]).decode("utf-8", errors="ignore").strip("\x00")
+                )
             except (UnicodeDecodeError, ValueError):
-                info['serial'] = resp[2:].hex()
+                info["serial"] = resp[2:].hex()
 
         return info
 
@@ -458,10 +502,11 @@ class UTi120Camera:
         """Read a single 4-byte register as an unsigned big-endian int."""
         resp = self._send_interrupt(
             bytes([FUNC_READ_REG, offset, 0x01]),
-            response_size=6, timeout=1000,
+            response_size=6,
+            timeout=1000,
         )
         if resp and len(resp) >= 6:
-            return struct.unpack('>I', bytes(resp[2:6]))[0]
+            return struct.unpack(">I", bytes(resp[2:6]))[0]
         return None
 
     def _drain_bulk(self) -> int:
@@ -469,8 +514,7 @@ class UTi120Camera:
         drained = 0
         while True:
             try:
-                data = self.dev.read(
-                    self.bulk_in.bEndpointAddress, 2048, timeout=100)
+                data = self.dev.read(self.bulk_in.bEndpointAddress, 2048, timeout=100)
                 if data and len(data) > 0:
                     drained += len(data)
                 else:
@@ -479,7 +523,9 @@ class UTi120Camera:
                 break
         return drained
 
-    def _send_transfer_cmd(self, sub_cmd: int, reg_count: int, payload: bytes = b'') -> bytes | None:
+    def _send_transfer_cmd(
+        self, sub_cmd: int, reg_count: int, payload: bytes = b""
+    ) -> bytes | None:
         """Send a TRANSFER (0x09) command and return the response."""
         cmd = bytes([FUNC_TRANSFER, sub_cmd, reg_count]) + payload
         resp = self._send_interrupt(cmd, response_size=64, timeout=2000)
@@ -505,7 +551,9 @@ class UTi120Camera:
             length_reg = REG_PKG_LENGTH_LOW
             name = "low-temp"
 
-        logger.info("  Downloading %s calibration from flash 0x%06X...", name, flash_addr)
+        logger.info(
+            "  Downloading %s calibration from flash 0x%06X...", name, flash_addr
+        )
 
         # Read package length
         pkg_length = self._read_register_uint(length_reg)
@@ -526,10 +574,9 @@ class UTi120Camera:
         time.sleep(0.1)
 
         # TRANSFER BEGIN: send flash address + length
-        addr_bytes = struct.pack('>I', flash_addr)
-        len_bytes = struct.pack('>I', pkg_length)
-        resp = self._send_transfer_cmd(TRANSFER_BEGIN, 0x02,
-                                       addr_bytes + len_bytes)
+        addr_bytes = struct.pack(">I", flash_addr)
+        len_bytes = struct.pack(">I", pkg_length)
+        resp = self._send_transfer_cmd(TRANSFER_BEGIN, 0x02, addr_bytes + len_bytes)
         if not resp:
             logger.error("  Failed: no response to TRANSFER BEGIN")
             self.set_run_status(STATUS_IDLE)
@@ -545,8 +592,9 @@ class UTi120Camera:
             chunk_data = None
             for attempt in range(3):
                 try:
-                    data = self.dev.read(self.bulk_in.bEndpointAddress,
-                                        CALIB_CHUNK_SIZE, timeout=2000)
+                    data = self.dev.read(
+                        self.bulk_in.bEndpointAddress, CALIB_CHUNK_SIZE, timeout=2000
+                    )
                     if data and len(data) > 0:
                         chunk_data = bytes(data)
                         break
@@ -561,10 +609,9 @@ class UTi120Camera:
 
             # CRC acknowledgement
             crc = zlib.crc32(chunk_data) & 0xFFFFFFFF
-            crc_bytes = struct.pack('>I', crc)
-            len_ack = struct.pack('>I', len(chunk_data))
-            resp = self._send_transfer_cmd(TRANSFER_CRC, 0x02,
-                                           crc_bytes + len_ack)
+            crc_bytes = struct.pack(">I", crc)
+            len_ack = struct.pack(">I", len(chunk_data))
+            resp = self._send_transfer_cmd(TRANSFER_CRC, 0x02, crc_bytes + len_ack)
             if not resp:
                 logger.error("  Failed: CRC ack failed at byte %d", len(result))
                 break
@@ -577,8 +624,7 @@ class UTi120Camera:
 
         # TRANSFER END
         total_crc = zlib.crc32(bytes(result)) & 0xFFFFFFFF
-        self._send_transfer_cmd(TRANSFER_END, 0x01,
-                                struct.pack('>I', total_crc))
+        self._send_transfer_cmd(TRANSFER_END, 0x01, struct.pack(">I", total_crc))
 
         # Restore IDLE
         self.set_run_status(STATUS_IDLE)

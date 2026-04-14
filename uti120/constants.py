@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
+# TODO: clean up dead code in general
 
 # Camera VID:PID
 USB_VID = 0x5656
@@ -51,7 +50,7 @@ SENSOR_MEASURE_RANGE = 0x09
 CMD_REQUEST_FRAME = bytes([0x81])
 
 # Display
-DISPLAY_WIDTH = FRAME_WIDTH * 6   # 720
+DISPLAY_WIDTH = FRAME_WIDTH * 6  # 720
 DISPLAY_HEIGHT = FRAME_HEIGHT * 6  # 540
 
 # Transfer protocol (calibration package download)
@@ -69,73 +68,54 @@ REG_PKG_LENGTH_HIGH = 0x0C
 REG_PKG_LENGTH_LOW = 0x0D
 
 # Application defaults
-DEFAULT_PALETTE_IDX = 5           # Inferno
-DEFAULT_EMISSIVITY = 0.95
-DEFAULT_CONTRAST = 128            # unity multiplier (range 64-255)
-DEFAULT_AMBIENT_TEMP = 22.0       # reflected / ambient temperature (°C)
+DEFAULT_PALETTE_IDX = 5  # Inferno
+DEFAULT_CONTRAST = 128  # unity multiplier (range 64-255)
+DEFAULT_AMBIENT_TEMP = 22.0  # reflected / ambient temperature (°C)
 
 # Processing parameters
-FPA_SMOOTH_WINDOW = 15            # median-filter buffer for FPA temperature
-DEFAULT_TFF_STD = 5               # temporal noise filter sigma
-TEMP_MARGIN = 2                   # edge pixels excluded from min/max stats
-RANGE_SWITCH_UP_C = 150.0         # switch to high range above this °C
-RANGE_SWITCH_DOWN_C = 120.0       # switch back to low range below this °C
-RANGE_SWITCH_COOLDOWN_S = 5.0     # seconds between range switches
+FPA_SMOOTH_WINDOW = 15  # median-filter buffer for FPA temperature
+DEFAULT_TFF_STD = 5  # temporal noise filter sigma
+TEMP_MARGIN = 2  # edge pixels excluded from min/max stats
+RANGE_SWITCH_UP_C = 150.0  # switch to high range above this °C
+RANGE_SWITCH_DOWN_C = 120.0  # switch back to low range below this °C
+RANGE_SWITCH_COOLDOWN_S = 5.0  # seconds between range switches
 
 # UI intervals
-STATS_UPDATE_INTERVAL_MS = 250    # temperature label refresh
-GRAPH_SAMPLE_INTERVAL_MS = 500    # graph data sampling rate
+STATS_UPDATE_INTERVAL_MS = 250  # temperature label refresh
+GRAPH_SAMPLE_INTERVAL_MS = 500  # graph data sampling rate
 
-# Limits
-MAX_PROBES = 10                   # maximum pinned temperature probes
-
-# Alarm
-ALARM_TEMP_MIN = -20
-ALARM_TEMP_MAX = 400
-ALARM_HYSTERESIS_DEFAULT = 0.5
-ALARM_SOURCES = [
-    ("Center", "center"),
-    ("Global MAX", "global_max"),
-    ("Global MIN", "global_min"),
-    ("ROI Center", "roi_center"),
-    ("ROI Avg", "roi_avg"),
-    ("ROI MAX", "roi_max"),
-    ("ROI MIN", "roi_min"),
-    ("Mouse", "mouse"),
-]
-VIDEO_FPS = 25                    # recording framerate
-RECONNECT_FAIL_THRESHOLD = 20     # consecutive failed frames before reconnect
+VIDEO_FPS = 25  # recording framerate
+RECONNECT_FAIL_THRESHOLD = 20  # consecutive failed frames before reconnect
 
 # Emissivity presets — (display_name, emissivity_value)
-# First entry must be "Custom" with None (used when slider is manually adjusted).
 # Values sourced from ThermoWorks / Fluke industry reference tables.
-EMISSIVITY_PRESETS = [
-    ("Custom", None),
-    ("Human Skin", 0.98),
-    ("Water", 0.95),
-    ("Ice / Snow", 0.97),
-    ("Concrete", 0.95),
-    ("Brick (red)", 0.93),
-    ("Wood (planed)", 0.90),
-    ("Glass", 0.92),
-    ("Paper", 0.93),
-    ("Rubber", 0.95),
-    ("Plastic (black)", 0.95),
-    ("Paint (flat)", 0.94),
-    ("Fabric / Cloth", 0.90),
-    ("Soil / Earth", 0.92),
-    ("Asphalt", 0.95),
-    ("Oxidized Steel", 0.79),
-    ("Stainless Steel", 0.59),
-    ("Oxidized Copper", 0.65),
-    ("Anodized Aluminum", 0.77),
-    ("Polished Metal", 0.10),
+EMISSIVITY_PRESETS = {
+    "Default": 0.95,
+    "HumanSkin": 0.98,
+    "Water": 0.95,
+    "IceSnow": 0.97,
+    "Concrete": 0.95,
+    "BrickRed": 0.93,
+    "WoodPlaned": 0.90,
+    "Glass": 0.92,
+    "Paper": 0.93,
+    "Rubber": 0.95,
+    "PlasticBlack": 0.95,
+    "PaintFlat": 0.94,
+    "FabricCloth": 0.90,
+    "SoilEarth": 0.92,
+    "Asphalt": 0.95,
+    "OxidizedSteel": 0.79,
+    "StainlessSteel": 0.59,
+    "OxidizedCopper": 0.65,
+    "AnodizedAluminum": 0.77,
+    "PolishedMetal": 0.10,
+}
+
+UPSCALING_METHODS = [
+    "trivial",  # blocky
+    "simple",  # interpolate and sharpen
+    "cnn",  # magic
 ]
 
-
-def default_save_dir() -> Path:
-    """Return the default directory for saving screenshots, videos, and CSVs."""
-    home = Path.home()
-    if sys.platform == 'win32':
-        return home / 'Documents' / 'UTi120'
-    return home / 'Pictures' / 'UTi120'
+CNN_MODEL = {"file": "ESPCN_x4.pb", "name": "espcn", "factor": 4}

@@ -5,77 +5,80 @@ from __future__ import annotations
 import logging
 import struct
 import time
-from pathlib import Path
+from threading import Thread, Event
 
-import cv2
 import usb.core
-from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot
+import numpy as np
 
 from .constants import (
-    DISPLAY_WIDTH, DISPLAY_HEIGHT,
-    STATUS_IDLE, STATUS_IMAGE_UPLOAD, default_save_dir,
+    DISPLAY_WIDTH,
+    DISPLAY_HEIGHT,
+    STATUS_IDLE,
+    STATUS_IMAGE_UPLOAD,
     RECONNECT_FAIL_THRESHOLD,
 )
 from .camera import UTi120Camera
 from .processor import FrameProcessor
 from .calibration import (
-    load_calibration_cache, save_calibration_cache,
+    load_calibration_cache,
+    save_calibration_cache,
     CalibrationPackage,
 )
 from .shutter_handler import ShutterHandler
+from .config import DaemonConfig
 
 __all__ = ["CameraThread"]
 
 logger = logging.getLogger(__name__)
 
 
-class CameraThread(QThread):
+class CameraThread(Thread):
     """USB camera loop running on a background thread."""
 
-    frame_ready = pyqtSignal(object, object)  # (colored_bgr ndarray, processor ref)
-    status_message = pyqtSignal(str)
-    camera_ready = pyqtSignal()
-    init_failed = pyqtSignal(str)
-    def __init__(self, parent: QThread | None = None) -> None:
-        super().__init__(parent)
+    def __init__(self, config: DaemonConfig) -> None:
+        super().__init__()
         self.camera = UTi120Camera()
-        self.processor = FrameProcessor()
+        self.processor = FrameProcessor(config)
         self.shutter_handler = ShutterHandler()
         self.running = False
         self._do_shutter = False
         self._do_nuc = False
-        self.save_dir = default_save_dir()
+
+        self.event_frame_ready: Event = Event()
+        self.current_frame: np.ndarray = np.zeros(0)  # colored bgr ndarray
 
     def run(self) -> None:
         self.running = True
 
         # --- Init camera ---
         if not self.camera.find_and_connect():
-            self.init_failed.emit("Failed to connect. Is the camera plugged in?")
+            raise FileNotFoundError("Failed to connect. Is the camera plugged in?")
             return
 
         info = self.camera.get_device_info()
         info_str = ", ".join(f"{k}: {v}" for k, v in info.items())
         logger.info("Device info: %s", info_str)
-        self.status_message.emit(f"Connected: {info_str}")
+        logger.info(f"Connected: {info_str}")
 
         # Calibration points (fallback)
         cal_points = self.camera.read_calibration_points()
         if not cal_points:
-            self.init_failed.emit("Failed to read calibration points from device.")
+            raise IOError("Failed to read calibration points from device.")
             return
         self.processor.set_calibration(cal_points)
 
         # Factory calibration packages (serial-aware cache)
-        serial = info.get('serial', '')
+        serial = info.get("serial", "")
         logger.info("Device serial: %s", serial)
         calib_pkgs = load_calibration_cache(serial)
         if calib_pkgs:
             logger.info("Calibration cache valid for serial %s", serial)
-            self.status_message.emit("Loaded calibration from cache")
+            logger.info("Loaded calibration from cache")
         else:
-            logger.info("Calibration cache miss — downloading from device "
-                        "(serial=%s)", serial)
+            logger.info(
+                "Calibration cache miss — downloading from device " "(serial=%s)",
+                serial,
+            )
             calib_pkgs = {}
             raw_data: dict[int, bytes] = {}
             for range_id, label in [(0, "low-temp"), (1, "high-temp")]:
@@ -84,13 +87,11 @@ class CameraThread(QThread):
                     try:
                         calib_pkgs[range_id] = CalibrationPackage(data=pkg_data)
                         raw_data[range_id] = pkg_data
-                        self.status_message.emit(f"Downloaded {label} calibration")
+                        logger.info(f"Downloaded {label} calibration")
                     except (struct.error, ValueError, AssertionError) as e:
-                        self.status_message.emit(
-                            f"WARNING: {label} parse failed: {e}")
+                        logger.warning(f"{label} parse failed: {e}")
             if raw_data:
-                save_calibration_cache(
-                    serial, raw_data.get(0), raw_data.get(1))
+                save_calibration_cache(serial, raw_data.get(0), raw_data.get(1))
 
         low_pkg = calib_pkgs.get(0)
         high_pkg = calib_pkgs.get(1)
@@ -108,7 +109,7 @@ class CameraThread(QThread):
         time.sleep(0.3)
 
         # Initial NUC
-        self.status_message.emit("Initial NUC...")
+        logger.info("Initial NUC...")
         self.camera.trigger_shutter()
         time.sleep(0.5)
         # Drain again after shutter (trigger_shutter re-enables streaming)
@@ -124,8 +125,7 @@ class CameraThread(QThread):
         for _ in range(5):
             self.camera.request_frame()
 
-        self.camera_ready.emit()
-        self.status_message.emit("Streaming")
+        logger.info("Streaming")
 
         # --- Main frame loop ---
         fail_count = 0
@@ -134,59 +134,62 @@ class CameraThread(QThread):
             # Handle pending commands
             if self._do_shutter:
                 self._do_shutter = False
-                self.status_message.emit("Shutter calibration...")
+                logger.info("Shutter calibration...")
                 self._do_shutter_calibration()
-                self.status_message.emit("Streaming")
+                logger.info("Streaming")
                 continue
 
             if self._do_nuc:
                 self._do_nuc = False
-                self.status_message.emit("NUC calibration...")
+                logger.info("NUC calibration...")
                 self.camera.trigger_shutter()
                 time.sleep(0.5)
                 self._do_shutter_calibration()
                 self.shutter_handler.did_nuc(self.processor.fpa_temp)
-                self.status_message.emit("Streaming")
+                logger.info("Streaming")
                 continue
 
             # Read frame
             try:
                 raw = self.camera.request_frame()
-            except usb.core.USBError:
+                if raw is None:
+                    fail_count += 1
+                    if fail_count > RECONNECT_FAIL_THRESHOLD:
+                        logger.warning(
+                            f"More than {RECONNECT_FAIL_THRESHOLD} failed frames, reconnecting"
+                        )
+                        raise IOError()
+                    else:
+                        continue
+            except (usb.core.USBError, IOError):
                 if not self.camera.reconnect():
-                    self.status_message.emit("Connection lost")
-                    break
+                    logger.error("Connection lost")
+                    raise IOError("Connection lost")
                 fail_count = 0
-                continue
-
-            if raw is None:
-                fail_count += 1
-                if fail_count > RECONNECT_FAIL_THRESHOLD:
-                    self.status_message.emit("Reconnecting...")
-                    if not self.camera.reconnect():
-                        self.status_message.emit("Connection lost")
-                        break
-                    fail_count = 0
                 continue
 
             fail_count = 0
 
             # Process
+            start_time = time.time()
             colored = self.processor.process(raw)
             if colored is None:
                 continue
+            logger.debug(f"processing took {time.time() - start_time} s")
 
             # Auto-recalibration
-            action = self.shutter_handler.check(self.processor.fpa_temp, self.processor.frame_counter)
-            if action == 'nuc':
-                self.status_message.emit(f"Auto-NUC (FPA={self.processor.fpa_temp:.2f}°C)")
+            action = self.shutter_handler.check(
+                self.processor.fpa_temp, self.processor.frame_counter
+            )
+            if action == "nuc":
+                logger.info(f"Auto-NUC (FPA={self.processor.fpa_temp:.2f}°C)")
                 self.camera.trigger_shutter()
                 time.sleep(0.5)
                 self._do_shutter_calibration()
                 self.shutter_handler.did_nuc(self.processor.fpa_temp)
                 continue
-            elif action == 'shutter':
-                self.status_message.emit(f"Auto-shutter (FPA={self.processor.fpa_temp:.2f}°C)")
+            elif action == "shutter":
+                logger.info(f"Auto-shutter (FPA={self.processor.fpa_temp:.2f}°C)")
                 self._do_shutter_calibration()
                 self.shutter_handler.did_shutter(self.processor.fpa_temp)
                 continue
@@ -195,20 +198,22 @@ class CameraThread(QThread):
             new_range = self.processor.check_range_switch()
             if new_range is not None:
                 label = "HIGH" if new_range == 1 else "LOW"
-                self.status_message.emit(f"Switching to {label} range...")
+                logger.info(f"Switching to {label} range...")
                 pkg = self.processor.switch_range(new_range)
                 self.camera.set_measure_range(
-                    pkg.sensor_gain, pkg.sensor_int, pkg.sensor_res)
+                    pkg.sensor_gain, pkg.sensor_int, pkg.sensor_res
+                )
                 time.sleep(0.3)
                 self._do_shutter_calibration()
-                self.status_message.emit("Streaming")
+                logger.info("Streaming")
                 continue
 
-            # Resize for display
-            display = cv2.resize(colored, (DISPLAY_WIDTH, DISPLAY_HEIGHT),
-                                 interpolation=cv2.INTER_NEAREST)
-
-            self.frame_ready.emit(display, self.processor)
+            start_time = time.time()
+            self.current_frame = self.processor.upscale(
+                colored, DISPLAY_WIDTH, DISPLAY_HEIGHT
+            )
+            logger.debug(f"upscaling took {time.time() - start_time} s")
+            self.event_frame_ready.set()
 
         self.camera.close()
 
@@ -222,15 +227,3 @@ class CameraThread(QThread):
         time.sleep(0.3)
         for _ in range(3):
             self.camera.request_frame()
-
-    @pyqtSlot()
-    def request_shutter(self) -> None:
-        self._do_shutter = True
-
-    @pyqtSlot()
-    def request_nuc(self) -> None:
-        self._do_nuc = True
-
-    def stop(self) -> None:
-        self.running = False
-        self.wait(5000)
