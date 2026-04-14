@@ -9,6 +9,12 @@
 - OSD rendering via pure OpenCV
 - No more Qt and no extra Python libraries (v4l2loopback via ffmpeg binary)
 
+## Screenshots
+Upscaled, resized and sharpened vs. resized and sharpened only vs. original "blocky" image
+<img src="docs/images/daemon-upscaled.png" style="width:30%; height:auto;">
+<img src="docs/images/daemon-simple.png" style="width:30%; height:auto;">
+<img src="docs/images/daemon-trivial.png" style="width:30%; height:auto;">
+
 ## Installation
 
 You need to install and load [v4l2loopback](https://github.com/v4l2loopback/v4l2loopback). You should be able to find information on how to load this for your Linux distribution online. Additionally, you need the  `ffmpeg` binary in your path. For Debian/Ubuntu and friends, something like this would be required:
