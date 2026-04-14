@@ -21,7 +21,6 @@ class DaemonConfig:
     debug_ffmpeg: bool = False
     emissivity: str = "Default"
     emissivity_custom: float = 0
-    distance_m: float = 1.0
 
 
 def argparse_config() -> DaemonConfig:
