@@ -69,19 +69,21 @@ class Daemon:
         logger.info("Daemon started")
         # start mail loop
         while True:
-            self.cam_thread.event_frame_ready.wait()
+            self.cam_thread.event_frame_ready.wait(20)
+            if not self.cam_thread.is_alive():
+                # something must have gone wrong with the cam thread
+                # anything wrong will raise an error there
+                raise RuntimeError("Camera threat died")
             self._on_frame(self.cam_thread.current_frame, self.cam_thread.processor)
+            self.cam_thread.event_frame_ready.clear()
 
     def _on_frame(self, display_bgr: np.ndarray, processor: FrameProcessor) -> None:
         # logger.info("new frame")
         # no special mode support for now
-
-        h, w = display_bgr.shape[:2]
-
-        self._draw_overlay(display_bgr, processor, w, h)
-
         # no timestamp, that is the job of a generic OSD, not our job
 
+        h, w = display_bgr.shape[:2]
+        self._draw_overlay(display_bgr, processor, w, h)
         self.ffmpeg_process.stdin.write(display_bgr)
 
     def _draw_overlay(self, frame: np.ndarray, proc: FrameProcessor, w: int, h: int):

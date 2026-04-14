@@ -152,21 +152,20 @@ class CameraThread(Thread):
             # Read frame
             try:
                 raw = self.camera.request_frame()
-            except usb.core.USBError:
+                if raw is None:
+                    fail_count += 1
+                    if fail_count > RECONNECT_FAIL_THRESHOLD:
+                        logger.warning(
+                            f"More than {RECONNECT_FAIL_THRESHOLD} failed frames, reconnecting"
+                        )
+                        raise IOError()
+                    else:
+                        continue
+            except (usb.core.USBError, IOError):
                 if not self.camera.reconnect():
-                    logger.info("Connection lost")
-                    break
+                    logger.error("Connection lost")
+                    raise IOError("Connection lost")
                 fail_count = 0
-                continue
-
-            if raw is None:
-                fail_count += 1
-                if fail_count > RECONNECT_FAIL_THRESHOLD:
-                    logger.info("Reconnecting...")
-                    if not self.camera.reconnect():
-                        logger.info("Connection lost")
-                        break
-                    fail_count = 0
                 continue
 
             fail_count = 0
