@@ -1,0 +1,5 @@
+[flake8]
+# E266: ignore ### main ###
+extend-ignore = E266
+# come on, we don't have 80 char terminals any more (and if you do, pls upgrade, HD is awesome) 
+max-line-length = 100
