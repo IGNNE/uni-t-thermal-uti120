@@ -8,8 +8,6 @@ from typing import Tuple
 import cv2
 import numpy as np
 
-from PyQt6.QtCore import pyqtSlot, QObject
-
 
 from .processor import FrameProcessor
 from .camera_thread import CameraThread
@@ -20,25 +18,22 @@ from .config import DaemonConfig
 logger = logging.getLogger(__name__)
 
 
-class Daemon(QObject):
+class Daemon():
 
     def __init__(
         self,
         config: DaemonConfig,
-        parent: QObject | None = None,
     ) -> None:
-        super().__init__(parent)
 
         # Camera thread
         self.cam_thread = CameraThread(config)
-        self.cam_thread.frame_ready.connect(self._on_frame)
 
         self.ffmpeg_process: None | subprocess.Popen = None
 
         self.config = config
 
     def start(self) -> None:
-        assert self.ffmpeg_process is None and not self.cam_thread.isRunning()
+        assert self.ffmpeg_process is None and not self.cam_thread.is_alive()
 
         if not os.path.exists(self.config.dev_video_file):
             logger.error(
@@ -72,8 +67,11 @@ class Daemon(QObject):
             threading.Thread(target=print_ffmpeg_output, daemon=True).start()
         self.cam_thread.start()
         logger.info("Daemon started")
+        # start mail loop
+        while True:
+            self.cam_thread.event_frame_ready.wait()
+            self._on_frame(self.cam_thread.current_frame, self.cam_thread.processor)
 
-    @pyqtSlot(object, object)
     def _on_frame(self, display_bgr: np.ndarray, processor: FrameProcessor) -> None:
         # logger.info("new frame")
         # no special mode support for now
@@ -84,7 +82,6 @@ class Daemon(QObject):
 
         # no timestamp, that is the job of a generic OSD, not our job
 
-        self.ffmpeg_process.stdin.write(display_bgr)
         self.ffmpeg_process.stdin.write(display_bgr)
 
     def _draw_overlay(self, frame: np.ndarray, proc: FrameProcessor, w: int, h: int):

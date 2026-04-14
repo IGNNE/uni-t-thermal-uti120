@@ -5,9 +5,10 @@ from __future__ import annotations
 import logging
 import struct
 import time
+from threading import Thread, Event
 
 import usb.core
-from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot
+import numpy as np
 
 from .constants import (
     DISPLAY_WIDTH,
@@ -31,16 +32,11 @@ __all__ = ["CameraThread"]
 logger = logging.getLogger(__name__)
 
 
-class CameraThread(QThread):
+class CameraThread(Thread):
     """USB camera loop running on a background thread."""
 
-    frame_ready = pyqtSignal(object, object)  # (colored_bgr ndarray, processor ref)
-    status_message = pyqtSignal(str)
-    camera_ready = pyqtSignal()
-    init_failed = pyqtSignal(str)
-
-    def __init__(self, config: DaemonConfig, parent: QThread | None = None) -> None:
-        super().__init__(parent)
+    def __init__(self, config: DaemonConfig) -> None:
+        super().__init__()
         self.camera = UTi120Camera()
         self.processor = FrameProcessor(config)
         self.shutter_handler = ShutterHandler()
@@ -48,12 +44,15 @@ class CameraThread(QThread):
         self._do_shutter = False
         self._do_nuc = False
 
+        self.event_frame_ready: Event = Event()
+        self.current_frame: np.ndarray = np.zeros(0)  # colored bgr ndarray
+
     def run(self) -> None:
         self.running = True
 
         # --- Init camera ---
         if not self.camera.find_and_connect():
-            self.init_failed.emit("Failed to connect. Is the camera plugged in?")
+            raise FileNotFoundError("Failed to connect. Is the camera plugged in?")
             return
 
         info = self.camera.get_device_info()
@@ -64,7 +63,7 @@ class CameraThread(QThread):
         # Calibration points (fallback)
         cal_points = self.camera.read_calibration_points()
         if not cal_points:
-            self.init_failed.emit("Failed to read calibration points from device.")
+            raise IOError("Failed to read calibration points from device.")
             return
         self.processor.set_calibration(cal_points)
 
@@ -90,7 +89,7 @@ class CameraThread(QThread):
                         raw_data[range_id] = pkg_data
                         logger.info(f"Downloaded {label} calibration")
                     except (struct.error, ValueError, AssertionError) as e:
-                        logger.info(f"WARNING: {label} parse failed: {e}")
+                        logger.warning(f"{label} parse failed: {e}")
             if raw_data:
                 save_calibration_cache(serial, raw_data.get(0), raw_data.get(1))
 
@@ -126,7 +125,6 @@ class CameraThread(QThread):
         for _ in range(5):
             self.camera.request_frame()
 
-        self.camera_ready.emit()
         logger.info("Streaming")
 
         # --- Main frame loop ---
@@ -212,10 +210,11 @@ class CameraThread(QThread):
                 continue
 
             start_time = time.time()
-            upscaled = self.processor.upscale(colored, DISPLAY_WIDTH, DISPLAY_HEIGHT)
+            self.current_frame = self.processor.upscale(
+                colored, DISPLAY_WIDTH, DISPLAY_HEIGHT
+            )
             logger.debug(f"upscaling took {time.time() - start_time} s")
-
-            self.frame_ready.emit(upscaled, self.processor)
+            self.event_frame_ready.set()
 
         self.camera.close()
 
@@ -229,15 +228,3 @@ class CameraThread(QThread):
         time.sleep(0.3)
         for _ in range(3):
             self.camera.request_frame()
-
-    @pyqtSlot()
-    def request_shutter(self) -> None:
-        self._do_shutter = True
-
-    @pyqtSlot()
-    def request_nuc(self) -> None:
-        self._do_nuc = True
-
-    def stop(self) -> None:
-        self.running = False
-        self.wait(5000)
