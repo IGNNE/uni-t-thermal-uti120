@@ -32,11 +32,6 @@ class Daemon(QObject):
         # Camera thread
         self.cam_thread = CameraThread(config)
         self.cam_thread.frame_ready.connect(self._on_frame)
-        # self.cam_thread.status_message.connect(self._on_status)
-        # self.cam_thread.camera_ready.connect(self._on_camera_ready)
-        # self.cam_thread.init_failed.connect(self._on_init_failed)
-        # self.cam_thread.save_dir = self._save_dir
-        # self.graph_panel.save_dir = self._save_dir
 
         self.ffmpeg_process: None | subprocess.Popen = None
 

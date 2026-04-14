@@ -3,7 +3,7 @@ from dataclasses import dataclass, fields
 import argparse
 
 from .palettes import PALETTES
-from .constants import UPSCALING_METHODS
+from .constants import UPSCALING_METHODS, EMISSIVITY_PRESETS
 
 logger = logging.getLogger(__name__)
 
@@ -19,20 +19,27 @@ class DaemonConfig:
     rotate_deg: int = 0
     flip: bool = False
     debug_ffmpeg: bool = False
+    emissivity: str = "Default"
+    emissivity_custom: float = 0
+    distance_m: float = 1.0
 
 
 def argparse_config() -> DaemonConfig:
     parser = argparse.ArgumentParser()
     config = DaemonConfig()
     for dc_field in fields(DaemonConfig):
+        # --show_something style flags
         if dc_field.type == bool:
             action = argparse.BooleanOptionalAction
         else:
             action = "store"
+        # multiple, limited choices
         if dc_field.name == "upscaling_method":
             choices = UPSCALING_METHODS
         elif dc_field.name == "palette":
             choices = PALETTES.keys()
+        elif dc_field.name == "emissivity":
+            choices = EMISSIVITY_PRESETS
         else:
             choices = None
         parser.add_argument(
@@ -47,5 +54,5 @@ def argparse_config() -> DaemonConfig:
     for arg_name, arg_value in vars(args).items():
         if arg_value is not None:
             setattr(config, arg_name, arg_value)
-            logger.info(f"set {arg_name} to {arg_value}")
+            logger.info(f"Set {arg_name} to {arg_value}")
     return config

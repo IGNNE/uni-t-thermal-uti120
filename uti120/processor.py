@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import math
 import time
+import os
 from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -25,7 +26,6 @@ from .constants import (
     HDR_LENS_TEMP,
     HDR_FP_TEMP,
     HDR_SHUTTER_TEMP_START,
-    DEFAULT_EMISSIVITY,
     DEFAULT_CONTRAST,
     DEFAULT_AMBIENT_TEMP,
     FPA_SMOOTH_WINDOW,
@@ -35,6 +35,8 @@ from .constants import (
     RANGE_SWITCH_DOWN_C,
     RANGE_SWITCH_COOLDOWN_S,
     UPSCALING_METHODS,
+    CNN_MODEL,
+    EMISSIVITY_PRESETS,
 )
 from .palettes import apply_palette
 from .calibration import (
@@ -74,7 +76,11 @@ class FrameProcessor:
         self.auto_range = True  # True = auto-scale, False = locked
         self._locked_vmin = None  # locked Y16 percentile min
         self._locked_vmax = None  # locked Y16 percentile max
-        self.emissivity = DEFAULT_EMISSIVITY
+        self.emissivity = (
+            config.emissivity_custom
+            if config.emissivity_custom > 0
+            else EMISSIVITY_PRESETS[config.emissivity]
+        )
         self.ambient_temp = DEFAULT_AMBIENT_TEMP
         self.distance = (
             1.0  # object distance in metres (correction disabled: MP[0xa4]=0)
@@ -569,9 +575,14 @@ class FrameProcessor:
         """CNN super-resolution black magic"""
         if self.sr_impl is None:
             self.sr_impl = cv2.dnn_superres.DnnSuperResImpl_create()
-            self.sr_impl.readModel("ESPCN_x4.pb")
-            self.sr_impl.setModel("espcn", 4)
-            # TODO: we never check this...
+            if not os.path.exists(CNN_MODEL["file"]):
+                logger.error(
+                    f"CNN model file {CNN_MODEL["file"]} not found, make sure it exists"
+                )
+                raise FileNotFoundError("Model file not found")
+            self.sr_impl.readModel(CNN_MODEL["file"])
+            self.sr_impl.setModel(CNN_MODEL["name"], CNN_MODEL["factor"])
+            # TODO: we never actually check this...
             logger.info("Read espcn model")
 
         upsampled = self.sr_impl.upsample(lowres)

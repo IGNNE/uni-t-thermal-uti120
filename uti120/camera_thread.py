@@ -59,7 +59,7 @@ class CameraThread(QThread):
         info = self.camera.get_device_info()
         info_str = ", ".join(f"{k}: {v}" for k, v in info.items())
         logger.info("Device info: %s", info_str)
-        self.status_message.emit(f"Connected: {info_str}")
+        logger.info(f"Connected: {info_str}")
 
         # Calibration points (fallback)
         cal_points = self.camera.read_calibration_points()
@@ -74,7 +74,7 @@ class CameraThread(QThread):
         calib_pkgs = load_calibration_cache(serial)
         if calib_pkgs:
             logger.info("Calibration cache valid for serial %s", serial)
-            self.status_message.emit("Loaded calibration from cache")
+            logger.info("Loaded calibration from cache")
         else:
             logger.info(
                 "Calibration cache miss — downloading from device " "(serial=%s)",
@@ -88,9 +88,9 @@ class CameraThread(QThread):
                     try:
                         calib_pkgs[range_id] = CalibrationPackage(data=pkg_data)
                         raw_data[range_id] = pkg_data
-                        self.status_message.emit(f"Downloaded {label} calibration")
+                        logger.info(f"Downloaded {label} calibration")
                     except (struct.error, ValueError, AssertionError) as e:
-                        self.status_message.emit(f"WARNING: {label} parse failed: {e}")
+                        logger.info(f"WARNING: {label} parse failed: {e}")
             if raw_data:
                 save_calibration_cache(serial, raw_data.get(0), raw_data.get(1))
 
@@ -110,7 +110,7 @@ class CameraThread(QThread):
         time.sleep(0.3)
 
         # Initial NUC
-        self.status_message.emit("Initial NUC...")
+        logger.info("Initial NUC...")
         self.camera.trigger_shutter()
         time.sleep(0.5)
         # Drain again after shutter (trigger_shutter re-enables streaming)
@@ -127,7 +127,7 @@ class CameraThread(QThread):
             self.camera.request_frame()
 
         self.camera_ready.emit()
-        self.status_message.emit("Streaming")
+        logger.info("Streaming")
 
         # --- Main frame loop ---
         fail_count = 0
@@ -136,19 +136,19 @@ class CameraThread(QThread):
             # Handle pending commands
             if self._do_shutter:
                 self._do_shutter = False
-                self.status_message.emit("Shutter calibration...")
+                logger.info("Shutter calibration...")
                 self._do_shutter_calibration()
-                self.status_message.emit("Streaming")
+                logger.info("Streaming")
                 continue
 
             if self._do_nuc:
                 self._do_nuc = False
-                self.status_message.emit("NUC calibration...")
+                logger.info("NUC calibration...")
                 self.camera.trigger_shutter()
                 time.sleep(0.5)
                 self._do_shutter_calibration()
                 self.shutter_handler.did_nuc(self.processor.fpa_temp)
-                self.status_message.emit("Streaming")
+                logger.info("Streaming")
                 continue
 
             # Read frame
@@ -156,7 +156,7 @@ class CameraThread(QThread):
                 raw = self.camera.request_frame()
             except usb.core.USBError:
                 if not self.camera.reconnect():
-                    self.status_message.emit("Connection lost")
+                    logger.info("Connection lost")
                     break
                 fail_count = 0
                 continue
@@ -164,9 +164,9 @@ class CameraThread(QThread):
             if raw is None:
                 fail_count += 1
                 if fail_count > RECONNECT_FAIL_THRESHOLD:
-                    self.status_message.emit("Reconnecting...")
+                    logger.info("Reconnecting...")
                     if not self.camera.reconnect():
-                        self.status_message.emit("Connection lost")
+                        logger.info("Connection lost")
                         break
                     fail_count = 0
                 continue
@@ -185,18 +185,14 @@ class CameraThread(QThread):
                 self.processor.fpa_temp, self.processor.frame_counter
             )
             if action == "nuc":
-                self.status_message.emit(
-                    f"Auto-NUC (FPA={self.processor.fpa_temp:.2f}°C)"
-                )
+                logger.info(f"Auto-NUC (FPA={self.processor.fpa_temp:.2f}°C)")
                 self.camera.trigger_shutter()
                 time.sleep(0.5)
                 self._do_shutter_calibration()
                 self.shutter_handler.did_nuc(self.processor.fpa_temp)
                 continue
             elif action == "shutter":
-                self.status_message.emit(
-                    f"Auto-shutter (FPA={self.processor.fpa_temp:.2f}°C)"
-                )
+                logger.info(f"Auto-shutter (FPA={self.processor.fpa_temp:.2f}°C)")
                 self._do_shutter_calibration()
                 self.shutter_handler.did_shutter(self.processor.fpa_temp)
                 continue
@@ -205,14 +201,14 @@ class CameraThread(QThread):
             new_range = self.processor.check_range_switch()
             if new_range is not None:
                 label = "HIGH" if new_range == 1 else "LOW"
-                self.status_message.emit(f"Switching to {label} range...")
+                logger.info(f"Switching to {label} range...")
                 pkg = self.processor.switch_range(new_range)
                 self.camera.set_measure_range(
                     pkg.sensor_gain, pkg.sensor_int, pkg.sensor_res
                 )
                 time.sleep(0.3)
                 self._do_shutter_calibration()
-                self.status_message.emit("Streaming")
+                logger.info("Streaming")
                 continue
 
             start_time = time.time()
