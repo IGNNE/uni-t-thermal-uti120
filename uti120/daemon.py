@@ -35,27 +35,40 @@ class Daemon:
     def start(self) -> None:
         assert self.ffmpeg_process is None and not self.cam_thread.is_alive()
 
-        if not os.path.exists(self.config.dev_video_file):
-            logger.error(
-                f"Webcam file {self.config.dev_video_file} does not exist. You need to set up "
-                + "v4l2loopback and point this daemon at the newly created /dev/videoX"
-            )
-            raise FileNotFoundError("Webcam file does not exist")
+        # if not os.path.exists(self.config.dev_video_file):
+        #     logger.error(
+        #         f"Webcam file {self.config.dev_video_file} does not exist. You need to set up "
+        #         + "v4l2loopback and point this daemon at the newly created /dev/videoX"
+        #     )
+        #     raise FileNotFoundError("Webcam file does not exist")
 
         # one-time setup of ffmpeg
         # I am deliberately not using PyAV, there are enough dependencies in the world already
         # plus, plain old `ffmpeg -do-stuff` does the job just fine
         #
+        # self.ffmpeg_process = subprocess.Popen(
+        #     (
+        #         "ffmpeg -y -f rawvideo -vcodec rawvideo -pix_fmt bgr24 "
+        #         + f"-s {DISPLAY_WIDTH}x{DISPLAY_HEIGHT} "
+        #         + f"-r 25 -i - -vf format=yuv420p -f v4l2 {self.config.dev_video_file}"
+        #     ).split(),
+        #     stderr=subprocess.STDOUT,
+        #     stdin=subprocess.PIPE,
+        #     stdout=subprocess.PIPE,
+        # )
         self.ffmpeg_process = subprocess.Popen(
             (
                 "ffmpeg -y -f rawvideo -vcodec rawvideo -pix_fmt bgr24 "
                 + f"-s {DISPLAY_WIDTH}x{DISPLAY_HEIGHT} "
-                + f"-r 25 -i - -vf format=yuv420p -f v4l2 {self.config.dev_video_file}"
+                + "-r 25 -i - -c:v libx264 -preset ultrafast -tune zerolatency "
+                + "-movflags frag_keyframe+empty_moov "
+                + "-b:v 100k -f rtp rtp://localhost:5501"
             ).split(),
             stderr=subprocess.STDOUT,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
         )
+
         # hack for debugging
         if self.config.debug_ffmpeg:
             import threading
