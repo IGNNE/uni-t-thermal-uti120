@@ -577,7 +577,7 @@ class FrameProcessor:
             self.sr_impl = cv2.dnn_superres.DnnSuperResImpl_create()
             if not os.path.exists(CNN_MODEL["file"]):
                 logger.error(
-                    f"CNN model file {CNN_MODEL["file"]} not found, make sure it exists"
+                    f"CNN model file {CNN_MODEL['file']} not found, make sure it exists"
                 )
                 raise FileNotFoundError("Model file not found")
             self.sr_impl.readModel(CNN_MODEL["file"])
